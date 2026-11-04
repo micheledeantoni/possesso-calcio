@@ -1,0 +1,9 @@
+data/*
+!data/README.md
+outputs/*
+!outputs/.gitkeep
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+*.pyc
