@@ -29,6 +29,20 @@ def load_run(config, root):
     return tracking, expected_end - start
 
 
+def load_run_arrays(config, root):
+    """Stessa porzione di `load_run`, in array con le tracce separate.
+
+    Reale: segmenti = tempi pubblicati (HALVES), 0 fuori. Demo: un solo segmento.
+    """
+    from src.arrays import load_atd_arrays, arrays_from_demo
+    from src.quality import HALVES
+    if config["source"] == "real":
+        return load_atd_arrays(Path(root) / "data", start_frame=config["start_frame"],
+                               end_frame=config["end_frame"], halves=HALVES)
+    tracking, _ = load_run(config, root)
+    return arrays_from_demo(tracking)
+
+
 def save_run(config, root, predictions, audit, preparation, prediction_checks):
     """CSV parziale distinto da submission completa; salva anche configurazione e audit."""
     name = config["run_name"]

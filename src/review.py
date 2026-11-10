@@ -90,6 +90,25 @@ def plot_players_change(before, after):
     return fig
 
 
+def plot_team_features(features):
+    """Alcune feature per squadra nel tempo; nessuna etichetta né confronto con il video."""
+    fig, axes = plt.subplots(3, 1, figsize=(11, 7), sharex=True, constrained_layout=True)
+    time = features.frame / 1500
+    for name, label in [("home", "Casa"), ("away", "Ospiti")]:
+        axes[0].plot(time, features[f"{name}_second_dist_ball"], label=f"Seconda distanza {label.lower()}", linewidth=.8)
+        axes[1].plot(time, features[f"{name}_players_10m"], label=label, linewidth=.8)
+    axes[0].set(ylabel="Metri", title="Secondo giocatore più vicino alla palla, per squadra")
+    axes[1].set(ylabel="Giocatori", title="Giocatori entro 10 m dalla palla (assente = palla mancante)")
+    axes[2].plot(time, features.ball_speed, color="black", linewidth=.6, label="Velocità palla")
+    anomaly = features.ball_tracking_anomaly.eq(1)
+    axes[2].scatter(time.loc[anomaly], np.zeros(int(anomaly.sum())), marker="|", color="#d55e43", s=40,
+                    label="Spostamento oltre la soglia → NaN")
+    axes[2].set(ylabel="m/s", xlabel="Minuto della registrazione", title="Velocità della palla fra frame consecutivi")
+    for ax in axes:
+        ax.legend(fontsize=8, loc="upper right")
+    return fig
+
+
 def plot_decisions(features, predictions):
     """Distanze effettivamente usate e output, mai confronto con il video."""
     fig, axes = plt.subplots(2, 1, figsize=(11, 5), sharex=True, constrained_layout=True)

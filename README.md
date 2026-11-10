@@ -48,7 +48,8 @@ Il notebook segue queste tappe:
 | 3. Palla | Lascia i buchi oppure ricostruisce quelli ammessi | Quantità di stime e grafico di un buco con osservazioni/stime separate |
 | 4. Giocatori | Mantiene tutto oppure applica il filtro grezzo | Conteggi prima/dopo e osservazioni rimosse sul campo |
 | 5. Possesso | Calcola distanze e assegna H/A/X | Distanze usate, etichette, provenienza osservata/stimata |
-| 6. Output | Controlla ed eventualmente salva la run | Validità del formato e cartella di destinazione |
+| 6. Feature per squadra | Rilegge le tracce come array e calcola le feature per frame | Riepilogo, anomalie della palla, grafico di alcune feature |
+| 7. Output | Controlla ed eventualmente salva la run | Validità del formato e cartella di destinazione |
 
 Non occorre modificare le celle delle tappe per cambiare intervallo o attivare un modulo.
 
@@ -62,6 +63,8 @@ Non occorre modificare le celle delle tappe per cambiare intervallo o attivare u
 | `ball_method` | `none`, `linear` oppure `velocity` |
 | `ball_max_gap_s` | Durata massima del buco da ricostruire, in secondi |
 | `player_policy` | `none` oppure `nearest22` |
+| `team_features` | Calcola le feature per squadra della tappa 6; non cambiano ancora le etichette |
+| `ball_speed_max_ms` | Velocità oltre la quale lo spostamento della palla è un errore del tracker; 40 m/s fissati a priori |
 | `show_plots` | Mostra o nasconde i grafici della run |
 | `preview_frames` | Ampiezza massima dell'anteprima di un buco; non cambia la ricostruzione |
 | `save_outputs` | Attiva il salvataggio locale |
@@ -80,6 +83,8 @@ CONFIG = {
     "ball_method": "none",
     "ball_max_gap_s": 0.5,
     "player_policy": "none",
+    "team_features": True,
+    "ball_speed_max_ms": 40.0,
     "show_plots": True,
     "preview_frames": 250,
     "save_outputs": True,
@@ -151,6 +156,18 @@ Per aggiungere una caratteristica: calcolarla in `build_features()`, documentare
 
 Per aggiungere una regola: implementarla in `algorithm.py`, mantenendo l'output `frame,label`, stessi frame e stesso ordine. Se la regola richiede parametri, passarli esplicitamente dalla CONFIG attraverso la chiamata nel notebook: non nasconderli in costanti dentro una cella. Le politiche alternative di possesso non sono ancora selezionabili da CONFIG: quel collegamento va aggiunto insieme alla nuova regola.
 
+### D. Feature per squadra (tracking ad array)
+
+File: `src/arrays.py` e `src/team_features.py`; tappa 6 del notebook, attivata da `team_features`.
+
+`arrays.py` legge il tracking conservando l'identità di traccia, necessaria per le velocità: `load_atd_arrays()` per la challenge, `load_metrica_npz()` per gli npz Metrica preparati dal gruppo (dati esterni, puliti o sporcati). Il formato comune `TrackingArrays` contiene `players (n, S, 2)`, `ball (n, 2)`, `team (n, S)` letto per frame e `segment`.
+
+`build_team_features()` riprende le feature del gruppo (distanze ordinate, conteggi entro 2/5/10/15 m, velocità, baricentri, estensione delle squadre, movimento della palla) con le correzioni dell'audit in `docs/audit_drive/AUDIT.md`: niente feature legate a uno slot o alla rosa, squadra letta per frame, derivate che non attraversano salti di frame o cambi di `segment`, soglia di velocità della palla esplicita (`ball_speed_max_ms`, 40 m/s fissati a priori). Colonne `home_*`, `away_*`, `diff_*` = casa − ospiti; NaN = informazione assente.
+
+Nel notebook la palla è la stessa della tappa 5 (`ball_used_xy`, con `ball_source`); il filtro giocatori non è applicato, perché lavora su liste senza slot. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più. Nessuna regola o modello usa ancora queste feature.
+
+Verifica sui dati Metrica: `docs/audit_drive/scripts/verify_team_features.py` (richiede scikit-learn, non incluso nei requisiti).
+
 ## 5. Come proporre una modifica
 
 1. Aprire un branch dedicato, per esempio `codex/palla-interpolazione`.
@@ -171,6 +188,7 @@ outputs/<run_name>/
 ├── predictions_slice.csv     # oppure submission_baseline.csv per tutta la registrazione reale
 ├── run.json                  # configurazione, audit e registro dei moduli
 ├── features.csv              # caratteristiche effettivamente usate
+├── team_features.csv         # feature per squadra, se team_features=True
 └── ball_provenance.csv       # coordinate originali, stimate, usate e provenienza
 ```
 

@@ -1,0 +1,35 @@
+== 0. Regola 'squadra piu vicina' (nessun fit), frame H/A con palla
+  partita 1 pulita: acc 0.8143 (copertura 0.990)
+  partita 1 sporca: acc 0.7619 (copertura 0.967)
+  partita 2 pulita: acc 0.8191 (copertura 0.979)
+  partita 2 sporca: acc 0.7656 (copertura 0.956)
+  partita 3 pulita: acc 0.7882 (copertura 0.995)
+  partita 3 sporca: acc 0.7444 (copertura 0.977)
+
+== 1. Riproduzione esperimento colleghi (train p1 frame<100540 H/A, pulito)
+  feature usate: 64 | slot usate: ['slot_1_available', 'slot_11_available']
+  test temporale p1: 0.9144 (atteso 0.9179)
+  partita 2 H/A: 0.9162 (atteso 0.9192) | cambi reali 293 predetti 1191
+
+== 2. Ablazione e leave-one-game-out (train su 2 partite H/A, test sulla terza)
+  ALL     p1: pulito 0.9233 / sporco 0.8745 | p2: pulito 0.9246 / sporco 0.8700 | p3: pulito 0.9141 / sporco 0.8707
+  NOSLOT  p1: pulito 0.9261 / sporco 0.8754 | p2: pulito 0.9277 / sporco 0.8742 | p3: pulito 0.9123 / sporco 0.8714
+  ROBUST  p1: pulito 0.9274 / sporco 0.8755 | p2: pulito 0.9278 / sporco 0.8745 | p3: pulito 0.9101 / sporco 0.8694
+
+== 3. Train su dati SPORCATI (ROBUST), test su partita sporcata esclusa
+  p1: cambi reali 328 | acc/cambi predetti -> w=0: 0.8814/1365  w=6: 0.8825/547  w=12: 0.8842/444  w=25: 0.8883/306  w=50: 0.8867/220
+  p2: cambi reali 293 | acc/cambi predetti -> w=0: 0.8929/1251  w=6: 0.8933/530  w=12: 0.8944/420  w=25: 0.9002/272  w=50: 0.8955/194
+  p3: cambi reali 363 | acc/cambi predetti -> w=0: 0.8790/1773  w=6: 0.8804/687  w=12: 0.8806/517  w=25: 0.8834/347  w=50: 0.8824/235
+
+== 4. D: 'palla assente => D' (accuratezza della regola su tutti i frame)
+  p1 pulita: P(D|palla assente)=0.984  P(palla assente|D)=1.000  frame assenti a gioco vivo=921
+  p1 sporca: P(D|palla assente)=0.950  P(palla assente|D)=0.998  frame assenti a gioco vivo=2952
+  p2 pulita: P(D|palla assente)=0.969  P(palla assente|D)=1.000  frame assenti a gioco vivo=1786
+  p2 sporca: P(D|palla assente)=0.938  P(palla assente|D)=0.999  frame assenti a gioco vivo=3719
+  p3 pulita: P(D|palla assente)=0.990  P(palla assente|D)=1.000  frame assenti a gioco vivo=485
+  p3 sporca: P(D|palla assente)=0.954  P(palla assente|D)=0.999  frame assenti a gioco vivo=2212
+
+== 5. Modello 3 classi (Modello2_DAH): split 80% su p1 pulita, poi p2 pulita/sporca tutti i frame
+  test temporale p1: 0.9321
+  p2 pulita tutti i frame: 0.9447 | cambi reali 427 predetti 1422
+  p2 sporca tutti i frame: 0.9007 | cambi reali 427 predetti 1714
