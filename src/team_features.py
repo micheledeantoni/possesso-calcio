@@ -6,7 +6,7 @@ correzioni dell'audit (`docs/audit_drive/AUDIT.md`):
   stessa persona fra partite, e nei dati sporcati o nella challenge è anonimo;
 - la squadra è letta frame per frame (`TrackingArrays.team`), non dal primo frame;
 - le derivate temporali non attraversano salti di frame né cambi di `segment`;
-- una sola soglia per la velocità della palla, passata esplicitamente;
+- soglie di velocità esplicite per palla e giocatori (salti di slot → NaN);
 - `x_extent`/`y_extent` al posto di `width`/`length`, che avevano i nomi invertiti.
 
 Convenzioni: metri, secondi, `fps` frame al secondo. NaN = informazione assente.
@@ -22,7 +22,7 @@ TEAMS = (("home", 0), ("away", 1))
 RADII_M = (2, 5, 10, 15)
 
 
-def _continuity(frames, segment):
+def continuity(frames, segment):
     """True dove il frame segue direttamente il precedente nello stesso segmento."""
     frames, segment = np.asarray(frames), np.asarray(segment)
     continuous = np.zeros(len(frames), dtype=bool)
@@ -58,23 +58,25 @@ def _displacement(ball, block, steps):
     return result
 
 
-def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, radii_m=RADII_M):
+def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_speed_max_ms=12.0, radii_m=RADII_M):
     """Feature per frame da un `TrackingArrays`. Gli input non vengono modificati.
 
     ball_speed_max_ms: velocità oltre la quale lo spostamento della palla fra due
     frame è trattato come errore del tracker (dx, dy, velocità → NaN, flag = 1).
     Il valore predefinito di 40 m/s è fisico, fissato a priori nelle regole di
     pulizia del gruppo; non è calibrato sulla partita della challenge.
+    player_speed_max_ms: oltre questa velocità uno slot ha cambiato persona fra due
+    frame; la velocità di quel passo è NaN (12 m/s, a priori, come nella pulizia).
     """
     if fps <= 0 or not math.isfinite(fps):
         raise ValueError("fps deve essere positivo")
-    if ball_speed_max_ms <= 0:
-        raise ValueError("ball_speed_max_ms deve essere positivo")
+    if ball_speed_max_ms <= 0 or player_speed_max_ms <= 0:
+        raise ValueError("Le soglie di velocità devono essere positive")
     players = np.asarray(tracking.players, dtype=float)
     ball = np.asarray(tracking.ball, dtype=float)
     team = np.asarray(tracking.team)
     n = len(ball)
-    continuous = _continuity(tracking.frames, tracking.segment)
+    continuous = continuity(tracking.frames, tracking.segment)
     block = np.cumsum(~continuous)
 
     out = {"frame": np.asarray(tracking.frames)}
@@ -87,6 +89,7 @@ def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, radii_m=RAD
     step = np.full(players.shape[:2], np.nan)
     step[1:] = np.linalg.norm(players[1:] - players[:-1], axis=2) * fps
     step[~continuous] = np.nan
+    step[step > player_speed_max_ms] = np.nan
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # righe interamente NaN

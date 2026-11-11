@@ -1,0 +1,27 @@
+# Con soglia di velocità giocatori 12 m/s nelle feature (11/11), obiettivo cambi_f1
+            partita_test    metodo  temperature  switch_scale  neutral_without_ball  frame_HA  accuratezza_HA  cambi_reali  cambi_predetti  cambi_recall  cambi_precisione  cambi_f1  ritardo_mediano_s  ritardo_assoluto_mediano_s
+metrica_partita_1_sporca per_frame          0.2           4.0                 False     89172          0.8874          328            1319        0.9421            0.2343    0.3752                0.0                        0.04
+metrica_partita_1_sporca   viterbi          0.2           4.0                 False     89172          0.8952          328             223        0.5488            0.8072    0.6534                0.0                        0.08
+metrica_partita_2_sporca per_frame          0.5           4.0                 False     85058          0.8942          293            1305        0.8942            0.2008    0.3279                0.0                        0.04
+metrica_partita_2_sporca   viterbi          0.5           4.0                 False     85058          0.9025          293             320        0.6997            0.6406    0.6688                0.0                        0.12
+metrica_partita_3_sporca per_frame          0.5           0.5                 False     97921          0.8842          363            1637        0.9311            0.2065    0.3380                0.0                        0.04
+metrica_partita_3_sporca   viterbi          0.5           0.5                 False     97921          0.8927          363             299        0.6033            0.7324    0.6616                0.0                        0.32
+
+# Versioni precedenti (10/11), senza soglia giocatori
+# python -m src.model <Train set> --objective accuratezza_HA
+            partita_test    metodo  temperature  switch_scale  neutral_without_ball  frame_HA  accuratezza_HA  cambi_reali  cambi_predetti  cambi_recall  cambi_precisione  cambi_f1  ritardo_mediano_s  ritardo_assoluto_mediano_s
+metrica_partita_1_sporca per_frame          0.1          1.00                  True     89172          0.8848          328            1377        0.9421            0.2244    0.3625                0.0                        0.04
+metrica_partita_1_sporca   viterbi          0.1          1.00                  True     89172          0.8953          328             173        0.4482            0.8497    0.5868                0.0                        0.12
+metrica_partita_2_sporca per_frame          0.2          0.25                 False     85058          0.8943          293            1307        0.9113            0.2043    0.3338                0.0                        0.04
+metrica_partita_2_sporca   viterbi          0.2          0.25                 False     85058          0.9040          293             192        0.5324            0.8125    0.6433                0.0                        0.12
+metrica_partita_3_sporca per_frame          0.2          2.00                 False     97921          0.8814          363            1703        0.9394            0.2002    0.3301                0.0                        0.04
+metrica_partita_3_sporca   viterbi          0.2          2.00                 False     97921          0.8948          363             231        0.5399            0.8485    0.6599                0.0                        0.28
+
+# python -m src.model <Train set> --objective cambi_f1 (predefinito)
+            partita_test    metodo  temperature  switch_scale  neutral_without_ball  frame_HA  accuratezza_HA  cambi_reali  cambi_predetti  cambi_recall  cambi_precisione  cambi_f1  ritardo_mediano_s  ritardo_assoluto_mediano_s
+metrica_partita_1_sporca per_frame          0.2           4.0                 False     89172          0.8848          328            1377        0.9421            0.2244    0.3625                0.0                        0.04
+metrica_partita_1_sporca   viterbi          0.2           4.0                 False     89172          0.8947          328             229        0.5671            0.8122    0.6679                0.0                        0.08
+metrica_partita_2_sporca per_frame          0.5           2.0                 False     85058          0.8943          293            1307        0.9113            0.2043    0.3338                0.0                        0.04
+metrica_partita_2_sporca   viterbi          0.5           2.0                 False     85058          0.9032          293             300        0.6758            0.6600    0.6678                0.0                        0.12
+metrica_partita_3_sporca per_frame          0.2           2.0                 False     97921          0.8814          363            1703        0.9394            0.2002    0.3301                0.0                        0.04
+metrica_partita_3_sporca   viterbi          0.2           2.0                 False     97921          0.8948          363             231        0.5399            0.8485    0.6599                0.0                        0.28

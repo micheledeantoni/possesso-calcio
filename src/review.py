@@ -109,6 +109,28 @@ def plot_team_features(features):
     return fig
 
 
+def plot_model_labels(baseline, predictions, probabilities=None):
+    """Etichette del modello e della regola di vicinanza: confronto di comportamento, non di accuratezza.
+
+    Con `probabilities` (modello H/A/D) aggiunge la probabilità di gioco fermo.
+    """
+    rows = 2 if probabilities is not None else 1
+    fig, axes = plt.subplots(rows, 1, figsize=(11, 3 * rows), sharex=True, constrained_layout=True, squeeze=False)
+    ax = axes[0, 0]
+    time = predictions.frame / 1500
+    codes = {"H": 1, "A": -1, "X": 0, "D": 0}
+    ax.step(time, baseline.label.map(codes) * .8, where="mid", linewidth=.6, color="gray", label="Regola di vicinanza (tappa 5)")
+    ax.step(time, predictions.label.map(codes), where="mid", linewidth=1.2, color="#2878b5", label="Modello + Viterbi")
+    ax.set(yticks=[-1, 0, 1], yticklabels=["A", "X / D", "H"], ylim=(-1.4, 1.4),
+           title="Possesso predetto: nessun confronto con verità o video")
+    ax.legend(fontsize=8, loc="upper right")
+    if probabilities is not None:
+        axes[1, 0].plot(time, probabilities.p_D, color="#d55e43", linewidth=.8)
+        axes[1, 0].set(ylim=(-.05, 1.05), ylabel="p(D)", title="Probabilità di gioco fermo (forward-backward)")
+    axes[-1, 0].set_xlabel("Minuto della registrazione")
+    return fig
+
+
 def plot_decisions(features, predictions):
     """Distanze effettivamente usate e output, mai confronto con il video."""
     fig, axes = plt.subplots(2, 1, figsize=(11, 5), sharex=True, constrained_layout=True)

@@ -1,0 +1,68 @@
+# Sporcatura della repo (src/dirtying.py, parametri predefiniti, semi 1-3) contro Train set del gruppo
+# Statistiche dopo sporcatura e pulizia (dirt_statistics)
+== p1
+  assenti_per_frame_gioco_vivo             Train set     1.098   nostra     1.288
+  assenze_episodi                          Train set   900.000   nostra   819.000
+  assenze_mediana_s                        Train set     2.680   nostra     2.920
+  assenze_p90_s                            Train set    19.616   nostra    20.680
+  assenze_vicino_linee                     Train set     0.398   nostra     0.411
+  assenze_insieme_ad_altre                 Train set     0.607   nostra     0.530
+  cambi_slot_senza_assenza_al_minuto       Train set    13.634   nostra    11.069
+  slot_stesso_giocatore_mediana_s          Train set    26.320   nostra    22.780
+  punti_squadra_sbagliata                  Train set     0.021   nostra     0.014
+  squadra_sbagliata_mediana_s              Train set     3.400   nostra     2.320
+  salti_in_campo                           Train set  1165.000   nostra  1143.000
+  frame_con_oggetti_fuori_campo            Train set     0.004   nostra     0.007
+  frame_gioco_vivo_squadra_oltre_11        Train set     0.046   nostra     0.023
+  frame_gioco_vivo_squadra_sotto_11        Train set     0.469   nostra     0.563
+  buchi_palla_lunghi                       Train set    12.000   nostra    12.000
+  buchi_palla_mediana_s                    Train set     7.180   nostra     6.560
+== p2
+  assenti_per_frame_gioco_vivo             Train set     1.463   nostra     1.093
+  assenze_episodi                          Train set   893.000   nostra   846.000
+  assenze_mediana_s                        Train set     2.520   nostra     2.440
+  assenze_p90_s                            Train set    26.320   nostra    22.800
+  assenze_vicino_linee                     Train set     0.357   nostra     0.379
+  assenze_insieme_ad_altre                 Train set     0.637   nostra     0.572
+  cambi_slot_senza_assenza_al_minuto       Train set    13.421   nostra    10.690
+  slot_stesso_giocatore_mediana_s          Train set    25.820   nostra    24.460
+  punti_squadra_sbagliata                  Train set     0.017   nostra     0.012
+  squadra_sbagliata_mediana_s              Train set     2.680   nostra     2.060
+  salti_in_campo                           Train set   951.000   nostra  1116.000
+  frame_con_oggetti_fuori_campo            Train set     0.008   nostra     0.007
+  frame_gioco_vivo_squadra_oltre_11        Train set     0.026   nostra     0.020
+  frame_gioco_vivo_squadra_sotto_11        Train set     0.506   nostra     0.501
+  buchi_palla_lunghi                       Train set    12.000   nostra    12.000
+  buchi_palla_mediana_s                    Train set     6.380   nostra     7.640
+== p3
+  assenti_per_frame_gioco_vivo             Train set     1.344   nostra     1.113
+  assenze_episodi                          Train set  1122.000   nostra   702.000
+  assenze_mediana_s                        Train set     2.360   nostra     2.820
+  assenze_p90_s                            Train set    17.992   nostra    31.528
+  assenze_vicino_linee                     Train set     0.465   nostra     0.476
+  assenze_insieme_ad_altre                 Train set     0.610   nostra     0.519
+  cambi_slot_senza_assenza_al_minuto       Train set    13.460   nostra    11.415
+  slot_stesso_giocatore_mediana_s          Train set    24.040   nostra    25.120
+  punti_squadra_sbagliata                  Train set     0.023   nostra     0.028
+  squadra_sbagliata_mediana_s              Train set     2.600   nostra     2.520
+  salti_in_campo                           Train set  1177.000   nostra  1138.000
+  frame_con_oggetti_fuori_campo            Train set     0.008   nostra     0.008
+  frame_gioco_vivo_squadra_oltre_11        Train set     0.050   nostra     0.050
+  frame_gioco_vivo_squadra_sotto_11        Train set     0.597   nostra     0.473
+  buchi_palla_lunghi                       Train set    12.000   nostra    12.000
+  buchi_palla_mediana_s                    Train set     5.840   nostra     6.560
+
+# Verifica incrociata del modello (train sulle altre due partite, test sulla terza)
+ partita         train         test    acc   cambi    f1
+       1  train nostri  test nostri 0.9059 328/243 0.722
+       1  train nostri test Lorenzo 0.8874 328/271 0.688
+       1 train Lorenzo  test nostri 0.9009 328/209 0.696
+       1 train Lorenzo test Lorenzo 0.8952 328/223 0.653
+       2  train nostri  test nostri 0.9156 293/241 0.704
+       2  train nostri test Lorenzo 0.9061 293/248 0.677
+       2 train Lorenzo  test nostri 0.9172 293/290 0.679
+       2 train Lorenzo test Lorenzo 0.9025 293/320 0.669
+       3  train nostri  test nostri 0.8984 363/333 0.687
+       3  train nostri test Lorenzo 0.9017 363/317 0.703
+       3 train Lorenzo  test nostri 0.9025 363/317 0.665
+       3 train Lorenzo test Lorenzo 0.8927 363/299 0.662

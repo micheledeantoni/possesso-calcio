@@ -43,8 +43,8 @@ Non li ho deserializzati, perché caricare un pickle esegue codice. Ho ispeziona
 ### C1. Conformità al regolamento
 
 - **Etichette manuali di BAR-ATH** (`etichette a mano Lore, Ce/BAR-ATH_manuale.xlsx` e `Etichette BAR - ATH 0-30min.xlsx`). La mail del 3/11 vieta le annotazioni manuali della partita fornita. Queste etichette vanno escluse da qualunque uso, compresa la "verifica a occhio" del modello. Bisogna poi controllare che nessuna soglia o scelta sia stata presa guardandole, e conviene toglierle dalla cartella condivisa.
-- **`buchi_palla_check.xlsx` e `buchi_sospetti_gioco_vivo.xlsx`**: non sappiamo come sono stati prodotti. Se un controllo è stato fatto guardando il video, rientra nel divieto di confronto con il video. Va chiesto agli autori.
-- **Sporcatura tarata sulle statistiche del tracking BAR-ATH.** Gli autori stessi la indicano come "zona grigia". Il README della repo, però, riporta la regola: "training e tuning dei parametri soltanto su dati esterni, anche per metodi a regole". Prima di basarci su questa taratura serve una conferma scritta dell'organizzazione.
+- **`buchi_palla_check.xlsx` e `buchi_sospetti_gioco_vivo.xlsx`**: risolto. Il gruppo ha confermato (10/11) che sono stati prodotti solo dal tracking, senza usare il video, quindi si possono usare. Restano però materiali derivati da BAR-ATH: vanno letti solo in locale, mai dentro strumenti IA.
+- **Sporcatura tarata sulle statistiche del tracking BAR-ATH**: risolto. Il gruppo ha confermato (10/11) che è consentito. La taratura usa solo statistiche del tracking, non la soluzione né il video. Va comunque dichiarata nel documento tecnico, come suggeriscono le linee guida della sporcatura.
 - **La cartella Drive contiene materiali BAR-ATH.** Chi la condivide con strumenti IA (Drive connesso a un assistente, upload, ecc.) rischia di violare la regola sui servizi IA.
 
 ### C2. Il modello è addestrato su Metrica *pulito*, non sporcato
@@ -161,7 +161,7 @@ Modello a 3 classi (split 80% su P1 pulita), su tutti i frame della partita 2:
 
 In ordine di priorità.
 
-1. **Recuperare gli script mancanti** dai colleghi: etichette, pulizia, sporcatura, creazione dei dataset, applicazione del modello, analisi degli errori. Chiarire anche l'origine dei file `buchi_*.xlsx` e mettere da parte le etichette manuali (C1).
+1. **Recuperare gli script mancanti** dai colleghi: etichette, pulizia, sporcatura, creazione dei dataset, applicazione del modello, analisi degli errori. Mettere da parte le etichette manuali (C1). L'origine dei file `buchi_*.xlsx` è chiarita: vengono solo dal tracking.
 2. **Rappresentazione ad array nel lettore.** Oggi `src/data.py` raggruppa le coordinate per squadra e scarta l'identità di traccia, che però serve per le velocità. Va aggiunto un formato `gioc (n, S, 2)`, `palla (n, 2)`, `squadra (n, S)`, `segment (n,)`, comune a BAR-ATH e Metrica, insieme a un lettore degli npz Metrica (dati esterni, quindi ammessi per training e tuning).
 3. **`src/team_features.py`:** le feature per squadra in forma vettoriale, partendo da `scripts/features_lib.py`, con queste modifiche:
    - niente feature `slot_*` né di rosa;
@@ -173,6 +173,18 @@ In ordine di priorità.
 
    **Stato (10/11):** fatto in `src/arrays.py`, `src/team_features.py` e `tests/test_team_features.py`. Il modulo si chiama `team_features.py`. Delle 100 feature dei colleghi, 67 coincidono con i loro CSV. Una è cambiata di proposito: `ball_displacement_0_5s` usa 13 frame, contro i loro 12. Le altre 32 sono state tolte: 28 di slot e 4 di rosa. Con il test leave-one-game-out sui dati sporcati l'accuratezza H/A è 88,4 / 89,5 / 88,1%. Lo script è `scripts/verify_team_features.py`. Nel notebook è la tappa 6, con le opzioni di CONFIG `team_features` e `ball_speed_max_ms`.
 4. **`src/cleaning.py`:** le regole di pulizia, da riconciliare con `src/ball.py` e `src/players.py`. L'interpolazione lineare esiste già. Mancano il filtro a 40 m/s per la palla e la pulizia per squadra, al massimo 11 giocatori, che rispetto a `nearest22` è più fondata.
+
+   **Stato (11/11):** fatto in `src/cleaning.py`, partendo dallo script "Pulizia dati giocatori e palla" ricevuto dal gruppo. Nel notebook è la tappa 6, con l'opzione `clean_tracking`. Rispetto all'originale ci sono quattro correzioni:
+   - campo e soglie sono parametri;
+   - i doppioni non vengono mediati;
+   - tracce e interpolazione non attraversano i confini dei tempi;
+   - la funzione duplicata (`pulisci_palla`) e l'analisi sulla ricucitura delle tracce sono escluse.
+
+   Sui tre match Metrica il risultato è identico all'originale, tranne i frame con doppioni: lo verifica `scripts/verify_cleaning.py`. `src/ball.py` e `src/players.py` restano per le tappe 3 e 4.
+
+   I dati del `Train set` sono stati puliti con la versione originale, che media i doppioni: la differenza riguarda pochi frame.
+
+   **Sporcatura (11/11):** lo script originale non è disponibile. L'ho riscritto in `src/dirtying.py`, seguendo le linee guida, e l'ho tarato confrontando posizione per posizione i file `Train set` con i dati puliti. Il risultato: le quantità della sporcatura stanno nella variabilità fra le tre partite, e per il modello le due sporcature sono equivalenti (88,7 / 90,6 / 90,2% contro 89,5 / 90,3 / 89,3% sui dati del gruppo). I dettagli sono in `dirtying_check.txt` e `scripts/verify_dirtying.py`.
 5. **`src/model.py`:**
    - training sui dati Metrica sporcati con cross-validation leave-one-game-out sulle 3 partite;
    - riconoscimento di D come stadio separato;
@@ -180,4 +192,5 @@ In ordine di priorità.
    - metriche anche sui cambi di possesso.
 
    Va aggiunto `scikit-learn` a `requirements.txt` con una versione fissata. I modelli si rigenerano dal codice: nessun `.pkl` in Git.
+   **Stato (10/11):** fatto in `src/model.py`, che è la tappa 7 del notebook. Lo smoothing usa Viterbi invece della maggioranza mobile. Con la valutazione annidata sui dati sporcati l'accuratezza H/A è 89,5 / 90,3 / 89,3% e l'F1 dei cambi è 0,65–0,67. Questi numeri sono quelli dell'11/11, con la soglia di velocità dei giocatori. I risultati sono in `model_cv.txt`. La versione di scikit-learn non è fissata: c'è un vincolo minimo (`>=1.5`), così Python 3.10 resta supportato, e la versione usata viene registrata nel log della run.
 6. **Collegamento a CONFIG e al notebook**, secondo le regole del README (§4C): l'output resta `frame,label`, con gli stessi frame e lo stesso ordine.

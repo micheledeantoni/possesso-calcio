@@ -9,7 +9,8 @@ Formato comune a BAR-ATH e Metrica (`TrackingArrays`):
 - ball    (n, 2)    metri, NaN = palla assente;
 - team    (n, S)    0 = casa, 1 = ospiti, per frame (nei dati sporcati cambia);
 - segment (n,)      tratti continui: le derivate temporali non li attraversano;
-- labels  (n,) o None, soltanto per dati esterni etichettati (Metrica).
+- labels  (n,) o None, soltanto per dati esterni etichettati (Metrica);
+- pitch   (lunghezza, larghezza) del campo in metri, o None se ignoto.
 """
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,7 @@ class TrackingArrays:
     team: np.ndarray
     segment: np.ndarray
     labels: np.ndarray = None
+    pitch: tuple = None
 
     def __post_init__(self):
         n = len(self.frames)
@@ -94,7 +96,7 @@ def load_atd_arrays(data_dir="data", pitch=(105.3, 68.0), start_frame=0, end_fra
         players=np.asarray(players, dtype=float).reshape(len(frames), len(slots), 2),
         ball=np.asarray(ball, dtype=float).reshape(len(frames), 2),
         team=np.broadcast_to(team_row, (len(frames), len(slots))).copy(),
-        segment=segment_from_halves(frames, halves))
+        segment=segment_from_halves(frames, halves), pitch=tuple(pitch))
 
 
 def segment_from_halves(frames, halves=None):
@@ -128,7 +130,7 @@ def arrays_from_demo(tracking):
             ball[i] = row.ball_xy
     team = np.broadcast_to(np.array([0] * home + [1] * away, dtype=np.int8), (n, home + away)).copy()
     return TrackingArrays(frames=tracking.frame.to_numpy(dtype=int), players=players, ball=ball,
-                          team=team, segment=np.ones(n, dtype=int))
+                          team=team, segment=np.ones(n, dtype=int), pitch=(105.3, 68.0))
 
 
 def load_metrica_npz(path):
@@ -148,5 +150,6 @@ def load_metrica_npz(path):
             raise ValueError("npz senza squadra_fr né squadra_slot")
         segment = data["periodo"].astype(int) if "periodo" in data.files else np.ones(n, dtype=int)
         labels = data["etichette"].astype(str) if "etichette" in data.files else None
+        pitch = tuple(float(v) for v in data["campo"]) if "campo" in data.files else (105.0, 68.0)
         return TrackingArrays(frames=np.arange(n), players=players, ball=data["palla"].astype(float),
-                              team=team, segment=segment, labels=labels)
+                              team=team, segment=segment, labels=labels, pitch=pitch)

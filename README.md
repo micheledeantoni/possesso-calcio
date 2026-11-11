@@ -4,7 +4,7 @@ Una pipeline esplorativa per stimare la squadra in possesso a partire dal tracki
 
 **Un notebook, tre moduli su cui lavorare:** palla mancante, tracce dei giocatori, caratteristiche e regole di possesso. Ogni trasformazione conserva gli input originali e registra cosa modifica.
 
-> Stato attuale: baseline geometrica, senza machine learning. Sceglie la squadra più vicina alla palla oppure si astiene. Non riconosce ancora il gioco fermo né il controllo effettivo della palla. Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
+> Stato attuale: due metodi selezionabili. La baseline geometrica sceglie la squadra più vicina alla palla oppure si astiene; il modello (classificatore + Viterbi) è addestrato soltanto sulle partite Metrica e assegna H/A a ogni frame. Non riconosce ancora il gioco fermo né il controllo effettivo della palla. Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
 
 ## 1. Avvio
 
@@ -48,8 +48,9 @@ Il notebook segue queste tappe:
 | 3. Palla | Lascia i buchi oppure ricostruisce quelli ammessi | Quantità di stime e grafico di un buco con osservazioni/stime separate |
 | 4. Giocatori | Mantiene tutto oppure applica il filtro grezzo | Conteggi prima/dopo e osservazioni rimosse sul campo |
 | 5. Possesso | Calcola distanze e assegna H/A/X | Distanze usate, etichette, provenienza osservata/stimata |
-| 6. Feature per squadra | Rilegge le tracce come array e calcola le feature per frame | Riepilogo, anomalie della palla, grafico di alcune feature |
-| 7. Output | Controlla ed eventualmente salva la run | Validità del formato e cartella di destinazione |
+| 6. Pulizia e feature per squadra | Rilegge le tracce come array, pulisce giocatori e palla, calcola le feature per frame | Registro della pulizia, riepilogo, grafico di alcune feature |
+| 7. Modello | Con `possession_method="model"` (H/A) o `"model_dah"` (H/A/D), addestra su Metrica e sostituisce le etichette | Parametri scelti, cambi predetti, confronto con la regola |
+| 8. Output | Controlla ed eventualmente salva la run | Validità del formato e cartella di destinazione |
 
 Non occorre modificare le celle delle tappe per cambiare intervallo o attivare un modulo.
 
@@ -63,8 +64,11 @@ Non occorre modificare le celle delle tappe per cambiare intervallo o attivare u
 | `ball_method` | `none`, `linear` oppure `velocity` |
 | `ball_max_gap_s` | Durata massima del buco da ricostruire, in secondi |
 | `player_policy` | `none` oppure `nearest22` |
-| `team_features` | Calcola le feature per squadra della tappa 6; non cambiano ancora le etichette |
+| `team_features` | Calcola le feature per squadra della tappa 6, usate dal modello |
+| `clean_tracking` | Pulisce giocatori e palla prima delle feature, con le stesse regole dei dati Metrica di training |
 | `ball_speed_max_ms` | Velocità oltre la quale lo spostamento della palla è un errore del tracker; 40 m/s fissati a priori |
+| `possession_method` | `nearest` (regola della tappa 5), `model` (H/A) oppure `model_dah` (H/A/D); i modelli richiedono `team_features=True` |
+| `metrica_dir` | Cartella degli npz Metrica etichettati usati per addestrare il modello |
 | `show_plots` | Mostra o nasconde i grafici della run |
 | `preview_frames` | Ampiezza massima dell'anteprima di un buco; non cambia la ricostruzione |
 | `save_outputs` | Attiva il salvataggio locale |
@@ -84,7 +88,10 @@ CONFIG = {
     "ball_max_gap_s": 0.5,
     "player_policy": "none",
     "team_features": True,
+    "clean_tracking": True,
     "ball_speed_max_ms": 40.0,
+    "possession_method": "nearest",
+    "metrica_dir": "data/metrica",
     "show_plots": True,
     "preview_frames": 250,
     "save_outputs": True,
@@ -156,17 +163,88 @@ Per aggiungere una caratteristica: calcolarla in `build_features()`, documentare
 
 Per aggiungere una regola: implementarla in `algorithm.py`, mantenendo l'output `frame,label`, stessi frame e stesso ordine. Se la regola richiede parametri, passarli esplicitamente dalla CONFIG attraverso la chiamata nel notebook: non nasconderli in costanti dentro una cella. Le politiche alternative di possesso non sono ancora selezionabili da CONFIG: quel collegamento va aggiunto insieme alla nuova regola.
 
-### D. Feature per squadra (tracking ad array)
+### D. Pulizia e feature per squadra (tracking ad array)
 
-File: `src/arrays.py` e `src/team_features.py`; tappa 6 del notebook, attivata da `team_features`.
+File: `src/arrays.py`, `src/cleaning.py` e `src/team_features.py`; tappa 6 del notebook, attivata da `team_features` e `clean_tracking`.
 
 `arrays.py` legge il tracking conservando l'identità di traccia, necessaria per le velocità: `load_atd_arrays()` per la challenge, `load_metrica_npz()` per gli npz Metrica preparati dal gruppo (dati esterni, puliti o sporcati). Il formato comune `TrackingArrays` contiene `players (n, S, 2)`, `ball (n, 2)`, `team (n, S)` letto per frame e `segment`.
 
 `build_team_features()` riprende le feature del gruppo (distanze ordinate, conteggi entro 2/5/10/15 m, velocità, baricentri, estensione delle squadre, movimento della palla) con le correzioni dell'audit in `docs/audit_drive/AUDIT.md`: niente feature legate a uno slot o alla rosa, squadra letta per frame, derivate che non attraversano salti di frame o cambi di `segment`, soglia di velocità della palla esplicita (`ball_speed_max_ms`, 40 m/s fissati a priori). Colonne `home_*`, `away_*`, `diff_*` = casa − ospiti; NaN = informazione assente.
 
-Nel notebook la palla è la stessa della tappa 5 (`ball_used_xy`, con `ball_source`); il filtro giocatori non è applicato, perché lavora su liste senza slot. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più. Nessuna regola o modello usa ancora queste feature.
+`cleaning.py` riprende la pulizia del gruppo (script "Pulizia dati giocatori e palla"), con le stesse soglie fissate a priori. Per i giocatori: tracce spezzate oltre 12 m/s; cambio di squadra di una traccia solo se riduce gli oggetti oltre 11; nei frame con più di 11 oggetti, doppioni a meno di 1 m uniti e oggetti oltre 1 m fuori dal campo tolti, mai il più vicino alla palla. Per la palla: via i punti impossibili oltre 40 m/s; buchi fino a 1 s interpolati solo se fisicamente possibili. Differenze dall'originale: campo e soglie sono parametri (Metrica 105 m, BAR-ATH 105,3 m); i doppioni non vengono mediati, resta il punto della traccia più lunga, così la velocità non ha salti artificiali; tracce e interpolazione non attraversano i confini dei tempi. Sui tre match Metrica i risultati coincidono con l'originale, tranne i frame con doppioni (`docs/audit_drive/scripts/verify_cleaning.py`).
 
-Verifica sui dati Metrica: `docs/audit_drive/scripts/verify_team_features.py` (richiede scikit-learn, non incluso nei requisiti).
+Nel notebook, con `clean_tracking=True`, le feature usano giocatori e palla puliti: le tappe 3 e 4 non vi entrano. Senza pulizia la palla è quella della tappa 3 (`ball_used_xy`) e le tracce restano originali, perché il filtro della tappa 4 lavora su liste senza slot. `ball_source` indica sempre le posizioni stimate. Le feature escludono le velocità oltre 12 m/s (`player_speed_max_ms`): uno slot che cambia persona. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più.
+
+Verifica sui dati Metrica: `docs/audit_drive/scripts/verify_team_features.py` .
+
+### E. Modello di possesso (classificatore + Viterbi)
+
+File: `src/model.py`; tappa 7 del notebook con `possession_method="model"`.
+
+1. Un HistGradientBoosting stima per ogni frame la probabilità di H e A dalle feature per squadra. Iperparametri ripresi dal lavoro del gruppo, non regolati.
+2. Viterbi a due stati sceglie la sequenza H/A più probabile. Emissioni = log-probabilità meno log-prior, moltiplicate per una temperatura; probabilità di cambio = tasso di cambi nelle etichette Metrica × una scala; transizione libera ai confini dei tempi e ai salti di frame; senza palla le emissioni possono diventare neutre.
+3. Temperatura, scala e emissioni neutre sono scelte in leave-one-game-out sulle sole partite Metrica. Obiettivo predefinito: F1 dei cambi di possesso (`cambi_f1`); in alternativa l'accuratezza per frame.
+
+Addestramento e scelta dei parametri usano soltanto gli npz in `metrica_dir`, a ogni run: nessun modello salvato, nessun dato della challenge. D non è prodotto: ogni frame riceve H o A.
+
+Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; frame H/A; un cambio è corretto se va alla stessa squadra entro 5 s):
+
+| Partita di test | Accuratezza per frame | Accuratezza Viterbi | Cambi reali / predetti | F1 cambi |
+|---|---|---|---|---|
+| 1 | 88,7% | 89,5% | 328 / 223 | 0,65 |
+| 2 | 89,4% | 90,3% | 293 / 320 | 0,67 |
+| 3 | 88,4% | 89,3% | 363 / 299 | 0,66 |
+
+Senza smoothing il classificatore predice 1.300–1.650 cambi. Viterbi tende a perdere i possessi brevi: recall dei cambi 55–70%, precisione 64–81%. I parametri scelti variano fra le partite e la scala del cambio è spesso al bordo della griglia (4,0): la griglia va allargata. Risultati completi: `docs/audit_drive/model_cv.txt`; per ripeterli: `python -m src.model data/metrica`.
+
+### F. Sporcatura dei dati Metrica (training set)
+
+File: `src/dirtying.py`. Non fa parte del notebook: prepara i dati di training.
+
+Riscrive le "Linee guida sporcatura" del gruppo, perché lo script originale non è disponibile. Le operazioni, applicate ai dati Metrica puliti con un seme fisso, sono sei:
+- assenze di durata log-normale, più frequenti vicino alle linee laterali e alla palla; spesso un gruppo di vicini sparisce e ricompare insieme;
+- identità spezzate in tracce su slot anonimi, con squadra fissa per slot;
+- pezzi brevi di traccia nella squadra sbagliata;
+- pochi oggetti che camminano oltre una linea laterale;
+- salti di 0,6–3 m per un frame;
+- 12 buchi della palla da 5–10 s a gioco vivo, lontano dalle interruzioni e nei contrasti.
+
+Non aggiunge doppioni e non cambia le etichette. Tutte le quantità sono parametri di `DirtParams`.
+
+I valori predefiniti riproducono le quantità dei file `Train set` del gruppo, misurate con `dirt_statistics` confrontando le posizioni con i dati puliti. Le quantità del `Train set` erano state tarate dal gruppo sulle statistiche del tracking BAR-ATH, uso confermato come consentito. Non sono gli stessi file, ma dati con le stesse caratteristiche: i dettagli stanno in `docs/audit_drive/dirtying_check.txt`.
+
+Verifica incrociata del modello:
+
+| Test sulla partita | Train su dati repo | Train su `Train set` |
+|---|---|---|
+| 1 (dati `Train set`) | 88,7% | 89,5% |
+| 2 (dati `Train set`) | 90,6% | 90,3% |
+| 3 (dati `Train set`) | 90,2% | 89,3% |
+
+Per il modello le due sporcature sono equivalenti. I dati della repo risultano circa 1 punto più facili come test, quindi il `Train set` resta la stima più prudente.
+
+Per generare i file (stesso formato del `Train set`, già ripuliti con `src/cleaning.py`):
+
+```sh
+python -m src.dirtying "<cartella npz Metrica puliti>" data/metrica --periods-from "<cartella Train set>"
+```
+
+`--periods-from` prende il periodo di gioco dai file del gruppo: i dati puliti non lo contengono.
+
+### G. Modello a tre stati H/A/D (gioco fermo senza palla)
+
+File: `src/dead_ball_features.py` e `src/model_dah.py`; tappa 7 del notebook con `possession_method="model_dah"`.
+
+Nelle etichette Metrica D coincide con la palla assente, perché le etichette sono costruite dai buchi della palla. Nella challenge questo non è garantito: la palla sparisce anche a gioco vivo. Il modello a tre stati riconosce quindi il gioco fermo **senza usare la palla**, con un secondo classificatore che guarda solo i giocatori:
+- movimento collettivo: velocità media e mediana, quota di giocatori lenti e veloci, andamento prima e dopo il frame;
+- schieramenti delle riprese: calcio d'inizio, rimessa, angolo, rinvio, rigore, barriere ed esultanze;
+- assetto delle squadre.
+
+Il possesso viene dal classificatore H/A del §4E. Le due evidenze si combinano così:
+- D: log P(D) − log prior(D);
+- H e A: log(1 − P(D)) + log P(H|non D) − log prior(H), e allo stesso modo per A.
+
+Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica. Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
 
 ## 5. Come proporre una modifica
 
@@ -189,6 +267,7 @@ outputs/<run_name>/
 ├── run.json                  # configurazione, audit e registro dei moduli
 ├── features.csv              # caratteristiche effettivamente usate
 ├── team_features.csv         # feature per squadra, se team_features=True
+├── probabilities.csv         # p_H, p_A, p_D per frame, con possession_method="model_dah"
 └── ball_provenance.csv       # coordinate originali, stimate, usate e provenienza
 ```
 

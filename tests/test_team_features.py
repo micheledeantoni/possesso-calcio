@@ -10,11 +10,11 @@ from src.team_features import build_team_features, feature_columns
 
 
 def tracking(n=6, ball=None, segment=None, frames=None):
-    """Due tracce di casa ferme, una ospite che si muove di 1 m per frame lungo x."""
+    """Due tracce di casa ferme, una ospite che si muove di 0,2 m per frame (5 m/s) lungo x."""
     players = np.zeros((n, 3, 2))
     players[:, 0] = (0., 0.)
     players[:, 1] = (10., 0.)
-    players[:, 2, 0] = 20. + np.arange(n)
+    players[:, 2, 0] = 20. + .2 * np.arange(n)
     team = np.tile(np.array([0, 0, 1], dtype=np.int8), (n, 1))
     if ball is None:
         ball = np.tile([1., 0.], (n, 1))
@@ -71,9 +71,9 @@ class TeamFeatureTests(unittest.TestCase):
     def test_speeds_do_not_cross_segment_or_frame_gaps(self):
         features = build_team_features(tracking(segment=[1, 1, 1, 2, 2, 2]))
         self.assertTrue(math.isnan(features.away_avg_speed[0]))
-        self.assertAlmostEqual(features.away_avg_speed[1], 25.)
+        self.assertAlmostEqual(features.away_avg_speed[1], 5.)
         self.assertTrue(math.isnan(features.away_avg_speed[3]))
-        self.assertAlmostEqual(features.away_avg_speed[4], 25.)
+        self.assertAlmostEqual(features.away_avg_speed[4], 5.)
         gap = build_team_features(tracking(frames=[0, 1, 2, 10, 11, 12]))
         self.assertTrue(math.isnan(gap.away_avg_speed[3]))
         ball = np.tile([1., 0.], (6, 1))
@@ -104,7 +104,7 @@ class TeamFeatureTests(unittest.TestCase):
     def test_nearest_player_speed_uses_the_nearest_track(self):
         data = tracking(n=3, ball=np.tile([19., 0.], (3, 1)))
         features = build_team_features(data)
-        self.assertAlmostEqual(features.away_nearest_player_speed[1], 25.)
+        self.assertAlmostEqual(features.away_nearest_player_speed[1], 5.)
         self.assertAlmostEqual(features.home_nearest_player_speed[1], 0.)
 
 
@@ -195,6 +195,21 @@ class RunStageTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "outputs/squadre/team_features.csv").exists())
             export_run(config, directory, tracking, features, predictions, check_tracking(tracking), {})
             self.assertFalse((Path(directory) / "outputs/squadre/team_features.csv").exists())
+
+    def test_stage_with_cleaning_uses_cleaned_ball(self):
+        from src.runs import load_run, load_run_arrays
+        from src.ball import prepare_ball
+        from src.cleaning import clean_tracking
+        from src.notebook_io import team_features_for_run
+        config = self.config()
+        listed, _ = load_run(config, Path.cwd())
+        tracking, _ = prepare_ball(listed)
+        arrays, interpolated, log = clean_tracking(load_run_arrays(config, Path.cwd()))
+        features, stage_log = team_features_for_run(arrays, tracking, 40., interpolated)
+        self.assertTrue(interpolated.any())  # la demo ha buchi brevi della palla
+        self.assertEqual(features.ball_source.eq("linear").sum(), interpolated.sum())
+        self.assertEqual(features.ball_available.sum(), int(np.isfinite(arrays.ball).all(axis=1).sum()))
+        self.assertIn("puliti", stage_log["giocatori_e_palla"])
 
     def test_real_arrays_use_published_halves(self):
         from src.runs import load_run_arrays

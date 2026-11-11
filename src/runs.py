@@ -58,6 +58,8 @@ def save_run(config, root, predictions, audit, preparation, prediction_checks):
                      start_frame=config["start_frame"])
     report = {"config": config, "audit_input": audit, "preparazione": preparation,
               "controlli_output": prediction_checks, "full_match_csv": full,
-              "nota": "Regola di vicinanza, senza riconoscimento D o accuratezza validata"}
+              "nota": ("Modello addestrato su Metrica + Viterbi, senza riconoscimento D"
+                       if config.get("possession_method") == "model"
+                       else "Regola di vicinanza, senza riconoscimento D o accuratezza validata")}
     (out / "run.json").write_text(json.dumps(report, indent=2))
     return out
