@@ -246,6 +246,16 @@ Il possesso viene dal classificatore H/A del §4E. Le due evidenze si combinano 
 
 Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica. Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
 
+Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame):
+
+| Partita di test | Accuratezza H/A/D | F1 di D | Falsi D nei buchi della palla a gioco vivo | Accuratezza H/A con palla per D | Falsi D con palla |
+|---|---|---|---|---|---|
+| 1 | 82,4% | 0,84 | 32% | 92,3% | 74% |
+| 2 | 85,9% | 0,89 | 22% | 93,2% | 65% |
+| 3 | 86,4% | 0,88 | 5% | 91,8% | 47% |
+
+Usare la palla fa guadagnare circa 7 punti su Metrica, ma è la scorciatoia "palla assente = D": nei buchi della palla a gioco vivo il modello dice D il 47–74% delle volte, contro il 5–32% senza palla. Quale versione convenga dipende da quanto, nella challenge, la palla manca anche a gioco vivo: va valutato in locale, non su Metrica. In entrambe le versioni i cambi di possesso predetti sono pochi (155–215 contro 293–363 reali) e i parametri scelti finiscono ai bordi della griglia (temperatura 0,1, scala 8): la griglia va allargata. Risultati completi: `docs/audit_drive/model_dah_cv.txt`.
+
 ## 5. Come proporre una modifica
 
 1. Aprire un branch dedicato, per esempio `codex/palla-interpolazione`.
