@@ -248,7 +248,7 @@ Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate da
 
 Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame):
 
-| Partita di test | Accuratezza H/A/D | F1 di D | Falsi D nei buchi della palla a gioco vivo | Accuratezza H/A con palla per D | Falsi D con palla |
+| Partita di test | Accuratezza H/A/D, D senza palla | F1 di D | Falsi D nei buchi a gioco vivo | Accuratezza H/A/D, D con palla | Falsi D, con palla |
 |---|---|---|---|---|---|
 | 1 | 82,4% | 0,84 | 32% | 92,3% | 74% |
 | 2 | 85,9% | 0,89 | 22% | 93,2% | 65% |
