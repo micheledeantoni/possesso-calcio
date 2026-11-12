@@ -54,6 +54,14 @@ Il notebook segue queste tappe:
 
 Non occorre modificare le celle delle tappe per cambiare intervallo o attivare un modulo.
 
+### Consegna: tutta la partita, senza aprire il notebook
+
+```sh
+python -m src.run_notebook --full --run-name consegna
+```
+
+Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2` (vedi `data/README.md`). Sulla partita intera richiede decine di minuti: la maggior parte è l'addestramento su Metrica.
+
 ## 3. CONFIG: i comandi della run
 
 | Parametro | Significato |
@@ -171,6 +179,10 @@ File: `src/arrays.py`, `src/cleaning.py` e `src/team_features.py`; tappa 6 del n
 
 `build_team_features()` riprende le feature del gruppo (distanze ordinate, conteggi entro 2/5/10/15 m, velocità, baricentri, estensione delle squadre, movimento della palla) con le correzioni dell'audit in `docs/audit_drive/AUDIT.md`: niente feature legate a uno slot o alla rosa, squadra letta per frame, derivate che non attraversano salti di frame o cambi di `segment`, soglia di velocità della palla esplicita (`ball_speed_max_ms`, 40 m/s fissati a priori). Colonne `home_*`, `away_*`, `diff_*` = casa − ospiti; NaN = informazione assente.
 
+Due opzioni sono attive di default perché migliorano lo spellF1 su Metrica (`docs/audit_drive/stability_experiments.txt`):
+- **feature orientate** (`ORIENTED`): baricentri lungo x, spostamenti e direzione della palla sono riferiti al verso d'attacco, ricavato in ogni tempo dalla posizione delle due squadre. In più ci sono `ball_x_oriented` e `ball_y_oriented`, dove x positivo vuol dire verso la porta degli ospiti. Così le feature hanno lo stesso significato nei due tempi e in tutte le partite;
+- **feature di contesto** (`CONTEXT`, colonne `ctx_*`): quota di frame in cui la casa ha il giocatore più vicino alla palla, medie della differenza di distanza e dei giocatori entro 5 m su ±0,5, ±1 e ±2 s, la stessa quota nel secondo prima e in quello dopo, e da quanti secondi la stessa squadra ha il giocatore più vicino. Le finestre non escono dal tempo in corso.
+
 `cleaning.py` riprende la pulizia del gruppo (script "Pulizia dati giocatori e palla"), con le stesse soglie fissate a priori. Per i giocatori: tracce spezzate oltre 12 m/s; cambio di squadra di una traccia solo se riduce gli oggetti oltre 11; nei frame con più di 11 oggetti, doppioni a meno di 1 m uniti e oggetti oltre 1 m fuori dal campo tolti, mai il più vicino alla palla. Per la palla: via i punti impossibili oltre 40 m/s; buchi fino a 1 s interpolati solo se fisicamente possibili. Differenze dall'originale: campo e soglie sono parametri (Metrica 105 m, BAR-ATH 105,3 m); i doppioni non vengono mediati, resta il punto della traccia più lunga, così la velocità non ha salti artificiali; tracce e interpolazione non attraversano i confini dei tempi. Sui tre match Metrica i risultati coincidono con l'originale, tranne i frame con doppioni (`docs/audit_drive/scripts/verify_cleaning.py`).
 
 Nel notebook, con `clean_tracking=True`, le feature usano giocatori e palla puliti: le tappe 3 e 4 non vi entrano. Senza pulizia la palla è quella della tappa 3 (`ball_used_xy`) e le tracce restano originali, perché il filtro della tappa 4 lavora su liste senza slot. `ball_source` indica sempre le posizioni stimate. Le feature escludono le velocità oltre 12 m/s (`player_speed_max_ms`): uno slot che cambia persona. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più.
@@ -244,9 +256,9 @@ Il possesso viene dal classificatore H/A del §4E. Le due evidenze si combinano 
 - D: log P(D) − log prior(D);
 - H e A: log(1 − P(D)) + log P(H|non D) − log prior(H), e allo stesso modo per A.
 
-Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica. Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
+Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica, con obiettivo predefinito lo spellF1, la metrica di classifica (§4H). Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
 
-Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame):
+Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame; obiettivo accuratezza e griglia precedenti, prima dello spellF1: i numeri con lo spellF1 sono nel §4H):
 
 | Partita di test | Accuratezza H/A/D, D senza palla | F1 di D | Falsi D nei buchi a gioco vivo | Accuratezza H/A/D, D con palla | Falsi D, con palla |
 |---|---|---|---|---|---|
@@ -255,6 +267,36 @@ Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altr
 | 3 | 86,4% | 0,88 | 5% | 91,8% | 47% |
 
 Usare la palla fa guadagnare circa 7 punti su Metrica, ma è la scorciatoia "palla assente = D": nei buchi della palla a gioco vivo il modello dice D il 47–74% delle volte, contro il 5–32% senza palla. Quale versione convenga dipende da quanto, nella challenge, la palla manca anche a gioco vivo: va valutato in locale, non su Metrica. In entrambe le versioni i cambi di possesso predetti sono pochi (155–215 contro 293–363 reali) e i parametri scelti finiscono ai bordi della griglia (temperatura 0,1, scala 8): la griglia va allargata. Risultati completi: `docs/audit_drive/model_dah_cv.txt`.
+
+### H. Metrica della challenge (spellF1, macroF1)
+
+File: `src/challenge_metrics.py`, reimplementato dalla specifica di `evaluation/possession_metrics.py` della repo pubblica della challenge (licenza MIT).
+- **spellF1** è la metrica di classifica. Un possesso è un tratto continuo di H o di A: D lo interrompe e non è mai un possesso. Possessi veri e previsti della stessa squadra vengono abbinati per sovrapposizione temporale (IoU); l'F1 si calcola alle soglie 0,3–0,7 e se ne fa la media. Le X previste sono riempite con l'ultima etichetta data.
+- **macroF1**, il primo spareggio, è la media dell'F1 per frame di H, A e D.
+
+`src/model.py` e `src/model_dah.py` riportano entrambe le metriche. Per il modello H/A/D l'obiettivo predefinito della scelta dei parametri è lo spellF1. Il calcolo usa solo le etichette Metrica: la soluzione della challenge non viene mai letta.
+
+Sui tre match Metrica sporcati (valutazione annidata; baseline ufficiale con finestra ±50, non scelta qui):
+
+| | Partita 1 | Partita 2 | Partita 3 |
+|---|---|---|---|
+| Baseline ufficiale, spellF1 | 0,371 | 0,352 | 0,326 |
+| `model` (solo H/A), spellF1 | 0,387 | 0,449 | 0,394 |
+| `model_dah`, D senza palla, spellF1, prima delle leve di stabilità | 0,553 | 0,558 | 0,509 |
+| **`model_dah`, D senza palla, spellF1, con le leve (predefinito)** | **0,623** | **0,608** | **0,579** |
+| `model_dah`, D con palla, spellF1, prima delle leve | 0,643 | 0,649 | 0,598 |
+| `model_dah`, D senza palla, macroF1, prima delle leve | 0,819 | 0,856 | 0,863 |
+| **`model_dah`, D senza palla, macroF1, con le leve** | **0,834** | **0,868** | **0,881** |
+| `model_dah`, D con palla, macroF1, prima delle leve | 0,920 | 0,926 | 0,919 |
+
+Le leve di stabilità sono tre: feature orientate, feature di contesto (§4D) e due versioni sporcate in più per partita nel training. L'effetto di ciascuna, misurata da sola:
+- feature orientate: +0,051 di spellF1 medio;
+- contesto: +0,006, cioè rumore;
+- sporcature in più: +0,023.
+
+Tutte e tre insieme danno +0,063, con un miglioramento in ogni partita. Nel notebook le sporcature in più si attivano con `metrica_extra_dirs` (vedi `data/README.md`). La versione con la palla per D non è stata rivalutata con le leve.
+
+Sulla partita della challenge la baseline ufficiale fa 0,2433 di spellF1 e 0,67 di macroF1, molto meno che su Metrica (0,33–0,37 e 0,81–0,82). I dati Metrica sporcati sono quindi più facili del tracking vero, e i numeri qui sopra **non sono una previsione dello score**: servono a confrontare i metodi fra loro. Per la consegna va usato `model_dah`, perché senza D i possessi separati da una palla morta si fondono. Dettagli in `docs/audit_drive/challenge_metric_eval.txt`; per ripetere la baseline: `python docs/audit_drive/scripts/baseline_metrica.py data/metrica`.
 
 ## 5. Come proporre una modifica
 
@@ -273,7 +315,7 @@ Con `save_outputs=True`:
 
 ```text
 outputs/<run_name>/
-├── predictions_slice.csv     # oppure submission_baseline.csv per tutta la registrazione reale
+├── predictions_slice.csv     # oppure submission.csv per tutta la registrazione reale
 ├── run.json                  # configurazione, audit e registro dei moduli
 ├── features.csv              # caratteristiche effettivamente usate
 ├── team_features.csv         # feature per squadra, se team_features=True

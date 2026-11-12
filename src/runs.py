@@ -54,12 +54,13 @@ def save_run(config, root, predictions, audit, preparation, prediction_checks):
     out = Path(root) / "outputs" / name
     out.mkdir(parents=True, exist_ok=True)
     full = config["source"] == "real" and config["start_frame"] == 0 and len(predictions) == 199319
-    save_predictions(predictions, out / ("submission_baseline.csv" if full else "predictions_slice.csv"),
+    save_predictions(predictions, out / ("submission.csv" if full else "predictions_slice.csv"),
                      start_frame=config["start_frame"])
     report = {"config": config, "audit_input": audit, "preparazione": preparation,
               "controlli_output": prediction_checks, "full_match_csv": full,
-              "nota": ("Modello addestrato su Metrica + Viterbi, senza riconoscimento D"
-                       if config.get("possession_method") == "model"
-                       else "Regola di vicinanza, senza riconoscimento D o accuratezza validata")}
+              "nota": {"model": "Modello H/A addestrato su Metrica + Viterbi, senza riconoscimento D",
+                       "model_dah": "Modello H/A/D addestrato su Metrica + Viterbi a tre stati; D senza usare la palla"
+                       }.get(config.get("possession_method"),
+                             "Regola di vicinanza, senza riconoscimento D o accuratezza validata")}
     (out / "run.json").write_text(json.dumps(report, indent=2))
     return out

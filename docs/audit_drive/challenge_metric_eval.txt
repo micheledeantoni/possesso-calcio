@@ -1,0 +1,27 @@
+# Metrica della challenge (spellF1, macroF1) sui tre match Metrica sporcati del Train set
+# Modelli: valutazione annidata leave-one-game-out (parametri scelti sulle altre due partite).
+# Baseline ufficiale: giocatore più vicino + voto di maggioranza (finestre della documentazione, non scelte qui).
+
+### BASELINE
+metrica_partita_1_sporca +-0: spellF1 0.1151 macroF1 0.8230 | +-25: spellF1 0.3285 macroF1 0.8243 | +-50: spellF1 0.3708 macroF1 0.8132 | +-125: spellF1 0.3039 macroF1 0.7457
+metrica_partita_2_sporca +-0: spellF1 0.1015 macroF1 0.8210 | +-25: spellF1 0.2970 macroF1 0.8264 | +-50: spellF1 0.3523 macroF1 0.8173 | +-125: spellF1 0.2882 macroF1 0.7499
+metrica_partita_3_sporca +-0: spellF1 0.0895 macroF1 0.8154 | +-25: spellF1 0.2818 macroF1 0.8188 | +-50: spellF1 0.3256 macroF1 0.8057 | +-125: spellF1 0.2731 macroF1 0.7315
+
+## python -m src.model (H/A, obiettivo cambi_f1)
+            partita_test  temperature  switch_scale  neutral_without_ball  spellF1  macroF1  spell_vere  spell_previste  accuratezza_HA  cambi_f1
+metrica_partita_1_sporca          0.2           4.0                 False   0.3868   0.4616         353             252          0.8952    0.6534
+metrica_partita_2_sporca          0.5           4.0                 False   0.4492   0.4753         321             386          0.9025    0.6688
+metrica_partita_3_sporca          0.5           0.5                 False   0.3942   0.4819         385             369          0.8927    0.6616
+
+## python -m src.model_dah (H/A/D, D senza palla, obiettivo spellF1)
+            partita_test  temperature  switch_scale  neutral_without_ball  spellF1  macroF1  spell_vere  spell_previste  accuratezza_tutti  accuratezza_HA   D_f1  cambi_f1  D_falsi_palla_assente_vivo
+metrica_partita_1_sporca          0.1          16.0                  True   0.5534   0.8191         353             226             0.8221          0.7560 0.8383    0.6277                      0.3750
+metrica_partita_2_sporca          0.1           8.0                  True   0.5577   0.8556         321             209             0.8593          0.8107 0.8850    0.5796                      0.2162
+metrica_partita_3_sporca          0.2           8.0                  True   0.5086   0.8625         385             278             0.8617          0.8725 0.8817    0.6371                      0.0420
+
+## python -m src.model_dah --dead-ball-uses-ball (H/A/D, D con palla, obiettivo spellF1)
+            partita_test  temperature  switch_scale  neutral_without_ball  spellF1  macroF1  spell_vere  spell_previste  accuratezza_tutti  accuratezza_HA   D_f1  cambi_f1  D_falsi_palla_assente_vivo
+metrica_partita_1_sporca          0.2           1.0                  True   0.6426   0.9197         353             272             0.9246          0.8842 0.9752    0.6827                      0.7425
+metrica_partita_2_sporca          0.1           8.0                  True   0.6488   0.9256         321             245             0.9305          0.8915 0.9722    0.6597                      0.6948
+metrica_partita_3_sporca          0.2           1.0                  True   0.5979   0.9188         385             276             0.9178          0.8882 0.9791    0.6609                      0.4724
+

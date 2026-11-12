@@ -227,3 +227,37 @@ class RunStageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrientedAndContextTests(unittest.TestCase):
+    def test_oriented_features_do_not_depend_on_field_side(self):
+        data = tracking(n=8, ball=np.column_stack([1. + np.arange(8) * .3, np.zeros(8)]))
+        data = TrackingArrays(data.frames, data.players + (30., 20.), data.ball + (30., 20.), data.team,
+                              data.segment, pitch=(105., 68.))
+        rotated = TrackingArrays(data.frames, np.stack([105. - data.players[..., 0], 68. - data.players[..., 1]], axis=2),
+                                 np.column_stack([105. - data.ball[:, 0], 68. - data.ball[:, 1]]), data.team,
+                                 data.segment, pitch=(105., 68.))
+        a = build_team_features(data, oriented=True)
+        b = build_team_features(rotated, oriented=True)
+        pd.testing.assert_frame_equal(a, b, check_exact=False, atol=1e-9)
+        self.assertTrue((a.ball_x_oriented.diff().dropna() > 0).all())  # verso la porta degli ospiti
+        plain = build_team_features(rotated, oriented=False)
+        self.assertFalse(np.allclose(plain.ball_dx.dropna(), a.ball_dx.dropna()))
+
+    def test_context_windows_and_streak(self):
+        n = 60
+        ball = np.tile([1., 0.], (n, 1))          # casa più vicina
+        ball[30:] = (19.5, 0.)                     # poi ospiti
+        ball[40:42] = np.nan                       # palla assente
+        features = build_team_features(tracking(n=n, ball=ball), context=True)
+        self.assertEqual(features.ctx_nearest_home_c12[10], 1.)
+        self.assertAlmostEqual(features.ctx_nearest_home_c12[29], 13 / 23)  # frame 17-41, senza palla a 40-41
+        self.assertAlmostEqual(features.ctx_nearest_home_past1s[35], 20 / 26)  # frame 10-35
+        self.assertEqual(features.ctx_nearest_streak_s.tolist()[28:32], [29 / 25, 30 / 25, 1 / 25, 2 / 25])
+        self.assertTrue(np.isnan(features.ctx_nearest_streak_s[40]))
+        self.assertEqual(features.ctx_nearest_streak_s[42], 1 / 25)
+        split = build_team_features(tracking(n=n, ball=ball, segment=[1] * 20 + [2] * 40), context=True)
+        self.assertEqual(split.ctx_nearest_streak_s[20], 1 / 25)
+        self.assertAlmostEqual(split.ctx_nearest_home_c12[20], 10 / 13)  # frame 20-32: niente del tempo precedente
+        plain = build_team_features(tracking(n=n, ball=ball), context=False)
+        self.assertFalse(any(c.startswith("ctx_") for c in plain.columns))
