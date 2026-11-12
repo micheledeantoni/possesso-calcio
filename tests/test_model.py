@@ -179,3 +179,27 @@ class ModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AugmentationTests(unittest.TestCase):
+    def test_extra_versions_never_reach_their_own_test_game(self):
+        from unittest import mock
+        import src.model_dah as dah
+        games = [dah.DahGame(name, None, None, np.array([]), None) for name in ("p1", "p2", "p3")]
+        extra = [dah.DahGame(name, None, None, np.array([]), None, primary=False) for name in ("p1", "p2", "p3")]
+        seen = []
+
+        class Stop(Exception):
+            pass
+
+        def record(train, *args, **kwargs):
+            seen.append(sorted((g.name, g.primary) for g in train))
+            raise Stop
+
+        with mock.patch.object(dah, "fit_dah_model", side_effect=record):
+            for test in games:
+                with self.assertRaises(Stop):
+                    dah.cross_validate([test] + [g for g in games if g is not test], extra=extra)
+        for names, test in zip(seen, ("p1", "p2", "p3")):
+            self.assertNotIn(test, [n for n, _ in names])
+            self.assertEqual(len(names), 4)  # due partite, ognuna nella versione principale e in quella in più

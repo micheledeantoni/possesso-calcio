@@ -20,6 +20,10 @@ import pandas as pd
 
 TEAMS = (("home", 0), ("away", 1))
 RADII_M = (2, 5, 10, 15)
+# Opzioni predefinite, uguali per training (Metrica) e run (challenge).
+ORIENTED = True    # coordinate e direzioni orientate sul verso d'attacco (spellF1 +0,05 su Metrica)
+CONTEXT = True     # finestre di contesto sui segnali di possesso (+0,01, insieme alle altre leve)
+CONTEXT_WINDOWS = (12, 25, 50)  # frame: ±0,5 s, ±1 s, ±2 s
 
 
 def continuity(frames, segment):
@@ -58,7 +62,8 @@ def _displacement(ball, block, steps):
     return result
 
 
-def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_speed_max_ms=12.0, radii_m=RADII_M):
+def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_speed_max_ms=12.0, radii_m=RADII_M,
+                        oriented=None, context=None):
     """Feature per frame da un `TrackingArrays`. Gli input non vengono modificati.
 
     ball_speed_max_ms: velocità oltre la quale lo spostamento della palla fra due
@@ -67,6 +72,11 @@ def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_spee
     pulizia del gruppo; non è calibrato sulla partita della challenge.
     player_speed_max_ms: oltre questa velocità uno slot ha cambiato persona fra due
     frame; la velocità di quel passo è NaN (12 m/s, a priori, come nella pulizia).
+    oriented: sostituisce le grandezze che dipendono dal lato del campo (baricentri
+    lungo x, direzione e spostamenti della palla) con versioni orientate sul verso
+    d'attacco, uguali nei due tempi e in tutte le partite (`orient_features`).
+    context: aggiunge le finestre di contesto sul possesso (`add_context_features`).
+    None = valori predefiniti del modulo (ORIENTED, CONTEXT).
     """
     if fps <= 0 or not math.isfinite(fps):
         raise ValueError("fps deve essere positivo")
@@ -168,7 +178,73 @@ def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_spee
                      "avg_speed", "nearest_player_speed", "x_extent", "y_extent", "mean_x"]
                     + [f"players_{r}m" for r in radii_m] + [f"players_{r}m_pct" for r in radii_m]):
         out[f"diff_{feature}"] = out[f"home_{feature}"] - out[f"away_{feature}"]
-    return pd.DataFrame(out)
+    features = pd.DataFrame(out)
+    if ORIENTED if oriented is None else oriented:
+        features = orient_features(features, ball, block, tracking.pitch)
+    if CONTEXT if context is None else context:
+        features = add_context_features(features, continuous, fps)
+    return features
+
+
+def orient_features(features, ball, block, pitch):
+    """Grandezze indipendenti dal lato del campo.
+
+    In ogni tratto continuo (un tempo) il verso è il segno mediano di
+    away_mean_x − home_mean_x: +1 se gli ospiti stanno a destra. Il cambio di
+    campo ruota il campo di 180°, quindi si capovolgono sia x sia y. Dopo la
+    trasformazione x positiva = verso la porta degli ospiti, in ogni tempo e partita.
+    """
+    f = features.copy()
+    length, width = pitch if pitch is not None else (105.0, 68.0)
+    gap = (f["away_mean_x"] - f["home_mean_x"]).to_numpy()
+    orient = np.full(len(f), np.nan)
+    for b in np.unique(block):
+        part = block == b
+        values = gap[part][np.isfinite(gap[part])]
+        if len(values) and np.median(values) != 0:
+            orient[part] = np.sign(np.median(values))
+    for name in ("home", "away"):
+        f[f"{name}_mean_x"] = (f[f"{name}_mean_x"] - length / 2) * orient
+    f["diff_mean_x"] = f["home_mean_x"] - f["away_mean_x"]
+    f["ball_dx"], f["ball_dy"] = f["ball_dx"] * orient, f["ball_dy"] * orient
+    moving = np.isfinite(f["ball_dx"]) & np.isfinite(f["ball_dy"]) & ((f["ball_dx"] != 0) | (f["ball_dy"] != 0))
+    f["ball_direction"] = np.where(moving, np.arctan2(f["ball_dy"], f["ball_dx"]), np.nan)
+    f["ball_x_oriented"] = (ball[:, 0] - length / 2) * orient
+    f["ball_y_oriented"] = (ball[:, 1] - width / 2) * orient
+    return f
+
+
+def add_context_features(features, continuous, fps=25, windows=CONTEXT_WINDOWS):
+    """Finestre di contesto sui segnali di possesso, senza uscire dal tratto continuo.
+
+    - quota di frame in cui la casa ha il giocatore più vicino alla palla, media
+      di diff_min_dist_ball e di diff_players_5m su ±w frame (offline: anche il futuro);
+    - la stessa quota solo nel secondo precedente e solo in quello successivo;
+    - da quanti secondi la stessa squadra ha il giocatore più vicino.
+    Le medie ignorano i NaN (palla assente): NaN solo se tutta la finestra è vuota.
+    """
+    from src.dead_ball_features import window_mean
+    f = features.copy()
+    continuous = np.asarray(continuous, dtype=bool)
+    home, away = f["home_min_dist_ball"].to_numpy(), f["away_min_dist_ball"].to_numpy()
+    known = np.isfinite(home) & np.isfinite(away)
+    nearest_home = np.where(known, np.where(home < away, 1.0, np.where(home > away, 0.0, 0.5)), np.nan)
+    signals = {"nearest_home": nearest_home, "diff_min_dist": f["diff_min_dist_ball"].to_numpy(),
+               "diff_players_5m": f["diff_players_5m"].to_numpy()}
+    for w in windows:
+        for name, values in signals.items():
+            f[f"ctx_{name}_c{w}"] = window_mean(values, continuous, w, w)
+    second = int(round(fps))
+    f["ctx_nearest_home_past1s"] = window_mean(nearest_home, continuous, second, 0)
+    f["ctx_nearest_home_future1s"] = window_mean(nearest_home, continuous, 0, second)
+    streak = np.zeros(len(f))
+    for i in range(len(f)):
+        if not known[i] or nearest_home[i] == 0.5:
+            continue
+        same = i > 0 and continuous[i] and known[i - 1] and nearest_home[i - 1] == nearest_home[i]
+        streak[i] = streak[i - 1] + 1 if same else 1
+    f["ctx_nearest_streak_s"] = np.where(known, streak / fps, np.nan)
+    return f
 
 
 def feature_columns(features):

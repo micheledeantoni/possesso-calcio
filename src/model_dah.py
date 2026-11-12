@@ -44,6 +44,7 @@ class DahGame:
     dead_features: pd.DataFrame
     labels: np.ndarray
     continuous: np.ndarray
+    primary: bool = True  # False: versione sporcata in più, solo per il training
 
 
 @dataclass
@@ -61,15 +62,19 @@ class DahModel:
     sklearn_version: str = ""
 
 
-def load_dah_games(folder, ball_speed_max_ms=40.0):
+def load_dah_games(folder, ball_speed_max_ms=40.0, primary=True, **feature_options):
+    """Partite di una cartella. Il nome del file identifica la partita: versioni
+    sporcate diverse della stessa partita (`primary=False`) hanno lo stesso nome e
+    finiscono sempre dalla stessa parte della validazione incrociata."""
     games = []
     for path in sorted(Path(folder).glob("*.npz")):
         arrays = load_metrica_npz(path)
         if arrays.labels is None:
             raise ValueError(f"{path.name}: mancano le etichette")
-        games.append(DahGame(path.stem, build_team_features(arrays, ball_speed_max_ms=ball_speed_max_ms),
+        games.append(DahGame(path.stem, build_team_features(arrays, ball_speed_max_ms=ball_speed_max_ms,
+                                                            **feature_options),
                              build_dead_ball_features(arrays), np.asarray(arrays.labels),
-                             continuity(arrays.frames, arrays.segment)))
+                             continuity(arrays.frames, arrays.segment), primary))
     if not games:
         raise ValueError(f"Nessun file .npz in {folder}")
     return games
@@ -235,9 +240,14 @@ def select_params(games, grid=None, objective="spellF1", uses_ball=False):
     grid = DEFAULT_GRID if grid is None else grid
     if len(games) < 2:
         raise ValueError("Servono almeno due partite per scegliere i parametri")
+    names = list(dict.fromkeys(g.name for g in games))
+    if len(names) < 2:
+        raise ValueError("Servono almeno due partite diverse per scegliere i parametri")
     held_out = []
-    for i, game in enumerate(games):
-        others = games[:i] + games[i + 1:]
+    for name in names:
+        others = [g for g in games if g.name != name]
+        game = next((g for g in games if g.name == name and g.primary), None)
+        game = game or next(g for g in games if g.name == name)
         held_out.append((game, _parts_for(others, game, uses_ball), transition_matrix(others)))
     best, best_score = None, -math.inf
     for params in _grid(grid):
@@ -274,13 +284,18 @@ def predict_dah(model, features, dead_features, continuous, probabilities=False)
     return result
 
 
-def cross_validate(games, grid=None, objective="spellF1", uses_ball=False):
-    """Valutazione annidata: per ogni partita di test, parametri scelti sulle altre."""
+def cross_validate(games, grid=None, objective="spellF1", uses_ball=False, extra=()):
+    """Valutazione annidata: per ogni partita di test, parametri scelti sulle altre.
+
+    `extra`: altre versioni sporcate delle stesse partite, usate solo per il
+    training quando la loro partita non è quella di test.
+    """
     if len(games) < 3:
         raise ValueError("La valutazione annidata richiede almeno tre partite")
     rows = []
-    for i, test in enumerate(games):
-        model = fit_dah_model(games[:i] + games[i + 1:], grid, objective, uses_ball)
+    for test in games:
+        train = [g for g in list(games) + list(extra) if g.name != test.name]
+        model = fit_dah_model(train, grid, objective, uses_ball)
         pred = predict_dah(model, test.features, test.dead_features, test.continuous).label.to_numpy()
         live_missing = (test.labels != "D") & (test.features.ball_available.to_numpy() == 0)
         rows.append({"partita_test": test.name, **model.params,
@@ -296,10 +311,16 @@ def main(argv=None):
     parser.add_argument("--objective", default="spellF1",
                         choices=["spellF1", "macroF1", "accuratezza_tutti", "D_f1", "cambi_f1", "accuratezza_HA"])
     parser.add_argument("--dead-ball-uses-ball", action="store_true")
+    parser.add_argument("--extra", action="append", default=[],
+                        help="cartella con altre versioni sporcate delle stesse partite (solo training)")
+    parser.add_argument("--oriented", choices=["si", "no"], help="forza le feature orientate")
+    parser.add_argument("--context", choices=["si", "no"], help="forza le feature di contesto")
     parser.add_argument("--output", default="outputs/model_dah_cv.json")
     args = parser.parse_args(argv)
-    table = cross_validate(load_dah_games(args.metrica_dir), objective=args.objective,
-                           uses_ball=args.dead_ball_uses_ball)
+    options = {k: v == "si" for k, v in (("oriented", args.oriented), ("context", args.context)) if v}
+    extra = [g for folder in args.extra for g in load_dah_games(folder, primary=False, **options)]
+    table = cross_validate(load_dah_games(args.metrica_dir, **options), objective=args.objective,
+                           uses_ball=args.dead_ball_uses_ball, extra=extra)
     pd.set_option("display.width", 250)
     print(table.round(4).to_string(index=False))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

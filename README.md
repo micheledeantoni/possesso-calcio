@@ -54,6 +54,14 @@ Il notebook segue queste tappe:
 
 Non occorre modificare le celle delle tappe per cambiare intervallo o attivare un modulo.
 
+### Consegna: tutta la partita, senza aprire il notebook
+
+```sh
+python -m src.run_notebook --full --run-name consegna
+```
+
+Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2` (vedi `data/README.md`). Sulla partita intera richiede decine di minuti: la maggior parte è l'addestramento su Metrica.
+
 ## 3. CONFIG: i comandi della run
 
 | Parametro | Significato |
@@ -171,6 +179,10 @@ File: `src/arrays.py`, `src/cleaning.py` e `src/team_features.py`; tappa 6 del n
 
 `build_team_features()` riprende le feature del gruppo (distanze ordinate, conteggi entro 2/5/10/15 m, velocità, baricentri, estensione delle squadre, movimento della palla) con le correzioni dell'audit in `docs/audit_drive/AUDIT.md`: niente feature legate a uno slot o alla rosa, squadra letta per frame, derivate che non attraversano salti di frame o cambi di `segment`, soglia di velocità della palla esplicita (`ball_speed_max_ms`, 40 m/s fissati a priori). Colonne `home_*`, `away_*`, `diff_*` = casa − ospiti; NaN = informazione assente.
 
+Due opzioni sono attive di default perché migliorano lo spellF1 su Metrica (`docs/audit_drive/stability_experiments.txt`):
+- **feature orientate** (`ORIENTED`): baricentri lungo x, spostamenti e direzione della palla sono riferiti al verso d'attacco, ricavato in ogni tempo dalla posizione delle due squadre. In più ci sono `ball_x_oriented` e `ball_y_oriented`, dove x positivo vuol dire verso la porta degli ospiti. Così le feature hanno lo stesso significato nei due tempi e in tutte le partite;
+- **feature di contesto** (`CONTEXT`, colonne `ctx_*`): quota di frame in cui la casa ha il giocatore più vicino alla palla, medie della differenza di distanza e dei giocatori entro 5 m su ±0,5, ±1 e ±2 s, la stessa quota nel secondo prima e in quello dopo, e da quanti secondi la stessa squadra ha il giocatore più vicino. Le finestre non escono dal tempo in corso.
+
 `cleaning.py` riprende la pulizia del gruppo (script "Pulizia dati giocatori e palla"), con le stesse soglie fissate a priori. Per i giocatori: tracce spezzate oltre 12 m/s; cambio di squadra di una traccia solo se riduce gli oggetti oltre 11; nei frame con più di 11 oggetti, doppioni a meno di 1 m uniti e oggetti oltre 1 m fuori dal campo tolti, mai il più vicino alla palla. Per la palla: via i punti impossibili oltre 40 m/s; buchi fino a 1 s interpolati solo se fisicamente possibili. Differenze dall'originale: campo e soglie sono parametri (Metrica 105 m, BAR-ATH 105,3 m); i doppioni non vengono mediati, resta il punto della traccia più lunga, così la velocità non ha salti artificiali; tracce e interpolazione non attraversano i confini dei tempi. Sui tre match Metrica i risultati coincidono con l'originale, tranne i frame con doppioni (`docs/audit_drive/scripts/verify_cleaning.py`).
 
 Nel notebook, con `clean_tracking=True`, le feature usano giocatori e palla puliti: le tappe 3 e 4 non vi entrano. Senza pulizia la palla è quella della tappa 3 (`ball_used_xy`) e le tracce restano originali, perché il filtro della tappa 4 lavora su liste senza slot. `ball_source` indica sempre le posizioni stimate. Le feature escludono le velocità oltre 12 m/s (`player_speed_max_ms`): uno slot che cambia persona. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più.
@@ -270,10 +282,19 @@ Sui tre match Metrica sporcati (valutazione annidata; baseline ufficiale con fin
 |---|---|---|---|
 | Baseline ufficiale, spellF1 | 0,371 | 0,352 | 0,326 |
 | `model` (solo H/A), spellF1 | 0,387 | 0,449 | 0,394 |
-| `model_dah`, D senza palla, spellF1 | 0,553 | 0,558 | 0,509 |
-| `model_dah`, D con palla, spellF1 | 0,643 | 0,649 | 0,598 |
-| `model_dah`, D senza palla, macroF1 | 0,819 | 0,856 | 0,863 |
-| `model_dah`, D con palla, macroF1 | 0,920 | 0,926 | 0,919 |
+| `model_dah`, D senza palla, spellF1, prima delle leve di stabilità | 0,553 | 0,558 | 0,509 |
+| **`model_dah`, D senza palla, spellF1, con le leve (predefinito)** | **0,623** | **0,608** | **0,579** |
+| `model_dah`, D con palla, spellF1, prima delle leve | 0,643 | 0,649 | 0,598 |
+| `model_dah`, D senza palla, macroF1, prima delle leve | 0,819 | 0,856 | 0,863 |
+| **`model_dah`, D senza palla, macroF1, con le leve** | **0,834** | **0,868** | **0,881** |
+| `model_dah`, D con palla, macroF1, prima delle leve | 0,920 | 0,926 | 0,919 |
+
+Le leve di stabilità sono tre: feature orientate, feature di contesto (§4D) e due versioni sporcate in più per partita nel training. L'effetto di ciascuna, misurata da sola:
+- feature orientate: +0,051 di spellF1 medio;
+- contesto: +0,006, cioè rumore;
+- sporcature in più: +0,023.
+
+Tutte e tre insieme danno +0,063, con un miglioramento in ogni partita. Nel notebook le sporcature in più si attivano con `metrica_extra_dirs` (vedi `data/README.md`). La versione con la palla per D non è stata rivalutata con le leve.
 
 Sulla partita della challenge la baseline ufficiale fa 0,2433 di spellF1 e 0,67 di macroF1, molto meno che su Metrica (0,33–0,37 e 0,81–0,82). I dati Metrica sporcati sono quindi più facili del tracking vero, e i numeri qui sopra **non sono una previsione dello score**: servono a confrontare i metodi fra loro. Per la consegna va usato `model_dah`, perché senza D i possessi separati da una palla morta si fondono. Dettagli in `docs/audit_drive/challenge_metric_eval.txt`; per ripetere la baseline: `python docs/audit_drive/scripts/baseline_metrica.py data/metrica`.
 
@@ -294,7 +315,7 @@ Con `save_outputs=True`:
 
 ```text
 outputs/<run_name>/
-├── predictions_slice.csv     # oppure submission_baseline.csv per tutta la registrazione reale
+├── predictions_slice.csv     # oppure submission.csv per tutta la registrazione reale
 ├── run.json                  # configurazione, audit e registro dei moduli
 ├── features.csv              # caratteristiche effettivamente usate
 ├── team_features.csv         # feature per squadra, se team_features=True

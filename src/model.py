@@ -60,7 +60,7 @@ class PossessionModel:
     sklearn_version: str = ""
 
 
-def load_metrica_games(folder, ball_speed_max_ms=40.0):
+def load_metrica_games(folder, ball_speed_max_ms=40.0, **feature_options):
     """Tutti gli npz Metrica della cartella, in ordine di nome."""
     games = []
     for path in sorted(Path(folder).glob("*.npz")):
@@ -68,7 +68,7 @@ def load_metrica_games(folder, ball_speed_max_ms=40.0):
         if arrays.labels is None:
             raise ValueError(f"{path.name}: mancano le etichette")
         games.append(Game(name=path.stem,
-                          features=build_team_features(arrays, ball_speed_max_ms=ball_speed_max_ms),
+                          features=build_team_features(arrays, ball_speed_max_ms=ball_speed_max_ms, **feature_options),
                           labels=np.asarray(arrays.labels),
                           continuous=continuity(arrays.frames, arrays.segment)))
     if not games:
