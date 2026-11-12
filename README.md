@@ -244,9 +244,9 @@ Il possesso viene dal classificatore H/A del §4E. Le due evidenze si combinano 
 - D: log P(D) − log prior(D);
 - H e A: log(1 − P(D)) + log P(H|non D) − log prior(H), e allo stesso modo per A.
 
-Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica. Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
+Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica, con obiettivo predefinito lo spellF1, la metrica di classifica (§4H). Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
 
-Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame):
+Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame; obiettivo accuratezza e griglia precedenti, prima dello spellF1: i numeri con lo spellF1 sono nel §4H):
 
 | Partita di test | Accuratezza H/A/D, D senza palla | F1 di D | Falsi D nei buchi a gioco vivo | Accuratezza H/A/D, D con palla | Falsi D, con palla |
 |---|---|---|---|---|---|
@@ -255,6 +255,27 @@ Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altr
 | 3 | 86,4% | 0,88 | 5% | 91,8% | 47% |
 
 Usare la palla fa guadagnare circa 7 punti su Metrica, ma è la scorciatoia "palla assente = D": nei buchi della palla a gioco vivo il modello dice D il 47–74% delle volte, contro il 5–32% senza palla. Quale versione convenga dipende da quanto, nella challenge, la palla manca anche a gioco vivo: va valutato in locale, non su Metrica. In entrambe le versioni i cambi di possesso predetti sono pochi (155–215 contro 293–363 reali) e i parametri scelti finiscono ai bordi della griglia (temperatura 0,1, scala 8): la griglia va allargata. Risultati completi: `docs/audit_drive/model_dah_cv.txt`.
+
+### H. Metrica della challenge (spellF1, macroF1)
+
+File: `src/challenge_metrics.py`, reimplementato dalla specifica di `evaluation/possession_metrics.py` della repo pubblica della challenge (licenza MIT).
+- **spellF1** è la metrica di classifica. Un possesso è un tratto continuo di H o di A: D lo interrompe e non è mai un possesso. Possessi veri e previsti della stessa squadra vengono abbinati per sovrapposizione temporale (IoU); l'F1 si calcola alle soglie 0,3–0,7 e se ne fa la media. Le X previste sono riempite con l'ultima etichetta data.
+- **macroF1**, il primo spareggio, è la media dell'F1 per frame di H, A e D.
+
+`src/model.py` e `src/model_dah.py` riportano entrambe le metriche. Per il modello H/A/D l'obiettivo predefinito della scelta dei parametri è lo spellF1. Il calcolo usa solo le etichette Metrica: la soluzione della challenge non viene mai letta.
+
+Sui tre match Metrica sporcati (valutazione annidata; baseline ufficiale con finestra ±50, non scelta qui):
+
+| | Partita 1 | Partita 2 | Partita 3 |
+|---|---|---|---|
+| Baseline ufficiale, spellF1 | 0,371 | 0,352 | 0,326 |
+| `model` (solo H/A), spellF1 | 0,387 | 0,449 | 0,394 |
+| `model_dah`, D senza palla, spellF1 | 0,553 | 0,558 | 0,509 |
+| `model_dah`, D con palla, spellF1 | 0,643 | 0,649 | 0,598 |
+| `model_dah`, D senza palla, macroF1 | 0,819 | 0,856 | 0,863 |
+| `model_dah`, D con palla, macroF1 | 0,920 | 0,926 | 0,919 |
+
+Sulla partita della challenge la baseline ufficiale fa 0,2433 di spellF1 e 0,67 di macroF1, molto meno che su Metrica (0,33–0,37 e 0,81–0,82). I dati Metrica sporcati sono quindi più facili del tracking vero, e i numeri qui sopra **non sono una previsione dello score**: servono a confrontare i metodi fra loro. Per la consegna va usato `model_dah`, perché senza D i possessi separati da una palla morta si fondono. Dettagli in `docs/audit_drive/challenge_metric_eval.txt`; per ripetere la baseline: `python docs/audit_drive/scripts/baseline_metrica.py data/metrica`.
 
 ## 5. Come proporre una modifica
 

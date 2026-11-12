@@ -71,7 +71,7 @@ def model_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, objecti
     return predictions, log
 
 
-def model_dah_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, objective="accuratezza_tutti"):
+def model_dah_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, objective="spellF1"):
     """Modello a tre stati H/A/D (`src/model_dah.py`), addestrato sui soli npz Metrica.
 
     Il gioco fermo è stimato da feature che non usano la palla

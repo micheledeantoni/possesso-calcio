@@ -157,8 +157,12 @@ def decode(evidence, features, continuous, switch_probability, params):
     return LABELS[viterbi(emission, switch_probability * params["switch_scale"], continuous)]
 
 
-def evaluate(true, pred, tolerance_frames=125, fps=25):
-    """Metriche sui soli frame con etichetta reale H/A.
+def evaluate(true, pred, tolerance_frames=125, fps=25, breaks=None):
+    """Metriche sui soli frame con etichetta reale H/A, più le metriche della challenge.
+
+    spellF1 e macroF1 (`src/challenge_metrics.py`) usano tutti i frame, D compresi:
+    un modello che non predice D li sbaglia tutti. `breaks`: True dove inizia un
+    nuovo tratto (per esempio il secondo tempo).
 
     Cambi: calcolati sulla sequenza dei frame H/A (i D sono saltati). Un cambio
     predetto è corretto se va verso la stessa squadra entro `tolerance_frames`.
@@ -189,7 +193,15 @@ def evaluate(true, pred, tolerance_frames=125, fps=25):
             "cambi_recall": recall, "cambi_precisione": precision,
             "cambi_f1": 2 * recall * precision / (recall + precision) if matched else 0.0,
             "ritardo_mediano_s": float(np.median(delays)) if delays else float("nan"),
-            "ritardo_assoluto_mediano_s": float(np.median(np.abs(delays))) if delays else float("nan")}
+            "ritardo_assoluto_mediano_s": float(np.median(np.abs(delays))) if delays else float("nan"),
+            **_challenge(true, pred, breaks)}
+
+
+def _challenge(true, pred, breaks):
+    from src.challenge_metrics import challenge_scores
+    scores = challenge_scores(true, pred, breaks)
+    return {"spellF1": scores["spellF1"], "macroF1": scores["macroF1"],
+            "spell_vere": scores["spell_vere"], "spell_previste": scores["spell_previste"]}
 
 
 def _grid(grid):
@@ -213,8 +225,8 @@ def select_params(games, grid=None, objective="cambi_f1"):
         held_out.append((game, log_evidence(classifier, columns, prior, game.features), switch_rate(others)))
     best, best_score, table = None, -math.inf, []
     for params in _grid(grid):
-        results = [evaluate(game.labels, decode(evidence, game.features, game.continuous, rate, params))
-                   for game, evidence, rate in held_out]
+        results = [evaluate(game.labels, decode(evidence, game.features, game.continuous, rate, params),
+                            breaks=_breaks(game.continuous)) for game, evidence, rate in held_out]
         score = _pooled(results, objective)
         table.append({**params, objective: score})
         if score > best_score:
@@ -230,7 +242,18 @@ def _pooled(results, objective):
         pred = sum(r["cambi_predetti"] for r in results)
         hit = sum(r["cambi_recall"] * r["cambi_reali"] for r in results)
         return 2 * hit / (true + pred) if true + pred else 0.0
-    raise ValueError("objective: accuratezza_HA oppure cambi_f1")
+    if objective in ("spellF1", "macroF1"):
+        weight = "spell_vere" if objective == "spellF1" else "frame_HA"
+        return sum(r[objective] * r[weight] for r in results) / max(1, sum(r[weight] for r in results))
+    raise ValueError("objective: accuratezza_HA, cambi_f1, spellF1 oppure macroF1")
+
+
+def _breaks(continuous):
+    """Nuovo tratto dove i frame non sono continui (salti o cambio di tempo)."""
+    breaks = ~np.asarray(continuous, dtype=bool)
+    if len(breaks):
+        breaks[0] = False
+    return breaks
 
 
 def fit_possession_model(games, grid=None, objective="cambi_f1"):
@@ -265,7 +288,8 @@ def cross_validate(games, grid=None, objective="cambi_f1"):
         smoothed = predict_possession(model, test.features, test.continuous).label.to_numpy()
         for method, pred in (("per_frame", raw), ("viterbi", smoothed)):
             rows.append({"partita_test": test.name, "metodo": method,
-                         **{k: v for k, v in model.params.items()}, **evaluate(test.labels, pred)})
+                         **{k: v for k, v in model.params.items()},
+                         **evaluate(test.labels, pred, breaks=_breaks(test.continuous))})
     return pd.DataFrame(rows)
 
 
@@ -273,7 +297,7 @@ def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Valutazione leave-one-game-out su partite Metrica")
     parser.add_argument("metrica_dir")
-    parser.add_argument("--objective", default="cambi_f1", choices=["accuratezza_HA", "cambi_f1"])
+    parser.add_argument("--objective", default="cambi_f1", choices=["accuratezza_HA", "cambi_f1", "spellF1", "macroF1"])
     parser.add_argument("--output", default="outputs/model_cv.json")
     args = parser.parse_args(argv)
     games = load_metrica_games(args.metrica_dir)

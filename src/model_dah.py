@@ -13,7 +13,7 @@ Estende `src/model.py`:
   frame. Transizioni stimate dalle etichette Metrica, transizioni fra stati diversi
   moltiplicate per `switch_scale`; libere ai salti di frame e ai cambi di segmento.
 - Temperatura, scala e emissioni H/A neutre senza palla scelte in leave-one-game-out
-  sulle sole partite Metrica.
+  sulle sole partite Metrica; obiettivo predefinito spellF1, la metrica di classifica.
 
 Valutazione da terminale:
     python -m src.model_dah data/metrica
@@ -29,11 +29,11 @@ import pandas as pd
 from src.arrays import load_metrica_npz
 from src.team_features import build_team_features, feature_columns, continuity
 from src.dead_ball_features import build_dead_ball_features, dead_ball_columns
-from src.model import CLASSIFIER_PARAMS, EPSILON, LABELS as HA, fit_classifier, log_evidence, evaluate
+from src.model import CLASSIFIER_PARAMS, EPSILON, LABELS as HA, fit_classifier, log_evidence, evaluate, _breaks, _challenge
 
 STATES = np.array(["H", "A", "D"])
-DEFAULT_GRID = {"temperature": (0.1, 0.2, 0.5),
-                "switch_scale": (1.0, 2.0, 4.0, 8.0),
+DEFAULT_GRID = {"temperature": (0.03, 0.05, 0.1, 0.2),
+                "switch_scale": (1.0, 2.0, 4.0, 8.0, 16.0),
                 "neutral_without_ball": (False, True)}
 
 
@@ -198,10 +198,11 @@ def decode(parts, continuous, transitions, params):
     return STATES[viterbi_k(emissions(parts, params), log_t, continuous)]
 
 
-def evaluate_dah(true, pred, tolerance_frames=125, fps=25):
-    """Accuratezza su tutti i frame, D per frame, e metriche H/A di `src/model.evaluate`.
+def evaluate_dah(true, pred, tolerance_frames=125, fps=25, breaks=None):
+    """Accuratezza su tutti i frame, D per frame, metriche H/A e metriche della challenge.
 
-    Per i cambi di possesso i D predetti vengono sostituiti dall'ultimo H/A predetto.
+    Per i cambi di possesso i D predetti vengono sostituiti dall'ultimo H/A predetto;
+    spellF1 e macroF1 usano invece le previsioni così come sono.
     """
     true, pred = np.asarray(true), np.asarray(pred)
     d_true, d_pred = true == "D", pred == "D"
@@ -212,7 +213,8 @@ def evaluate_dah(true, pred, tolerance_frames=125, fps=25):
     result = {"accuratezza_tutti": float(np.mean(true == pred)),
               "D_precisione": precision, "D_recall": recall,
               "D_f1": 2 * precision * recall / (precision + recall) if tp else 0.0}
-    result.update(evaluate(true, filled, tolerance_frames, fps))
+    result.update(evaluate(true, filled, tolerance_frames, fps, breaks))
+    result.update(_challenge(true, pred, breaks))
     live = np.isin(true, HA)
     result["accuratezza_HA"] = float(np.mean(true[live] == pred[live])) if live.any() else float("nan")  # D = errore
     return result
@@ -229,7 +231,7 @@ def _grid(grid):
     return [dict(zip(keys, values)) for values in product(*(grid[k] for k in keys))]
 
 
-def select_params(games, grid=None, objective="accuratezza_tutti", uses_ball=False):
+def select_params(games, grid=None, objective="spellF1", uses_ball=False):
     grid = DEFAULT_GRID if grid is None else grid
     if len(games) < 2:
         raise ValueError("Servono almeno due partite per scegliere i parametri")
@@ -239,7 +241,8 @@ def select_params(games, grid=None, objective="accuratezza_tutti", uses_ball=Fal
         held_out.append((game, _parts_for(others, game, uses_ball), transition_matrix(others)))
     best, best_score = None, -math.inf
     for params in _grid(grid):
-        results = [evaluate_dah(g.labels, decode(parts, g.continuous, t, params)) for g, parts, t in held_out]
+        results = [evaluate_dah(g.labels, decode(parts, g.continuous, t, params), breaks=_breaks(g.continuous))
+                   for g, parts, t in held_out]
         weights = [len(g.labels) for g, _, _ in held_out]
         score = float(np.average([r[objective] for r in results], weights=weights))
         if score > best_score:
@@ -247,7 +250,7 @@ def select_params(games, grid=None, objective="accuratezza_tutti", uses_ball=Fal
     return best
 
 
-def fit_dah_model(games, grid=None, objective="accuratezza_tutti", uses_ball=False):
+def fit_dah_model(games, grid=None, objective="spellF1", uses_ball=False):
     import sklearn
     params = select_params(games, grid, objective, uses_ball)
     ha_clf, ha_cols, ha_prior = fit_classifier(games)
@@ -271,7 +274,7 @@ def predict_dah(model, features, dead_features, continuous, probabilities=False)
     return result
 
 
-def cross_validate(games, grid=None, objective="accuratezza_tutti", uses_ball=False):
+def cross_validate(games, grid=None, objective="spellF1", uses_ball=False):
     """Valutazione annidata: per ogni partita di test, parametri scelti sulle altre."""
     if len(games) < 3:
         raise ValueError("La valutazione annidata richiede almeno tre partite")
@@ -280,7 +283,8 @@ def cross_validate(games, grid=None, objective="accuratezza_tutti", uses_ball=Fa
         model = fit_dah_model(games[:i] + games[i + 1:], grid, objective, uses_ball)
         pred = predict_dah(model, test.features, test.dead_features, test.continuous).label.to_numpy()
         live_missing = (test.labels != "D") & (test.features.ball_available.to_numpy() == 0)
-        rows.append({"partita_test": test.name, **model.params, **evaluate_dah(test.labels, pred),
+        rows.append({"partita_test": test.name, **model.params,
+                     **evaluate_dah(test.labels, pred, breaks=_breaks(test.continuous)),
                      "D_falsi_palla_assente_vivo": float(np.mean(pred[live_missing] == "D")) if live_missing.any() else float("nan")})
     return pd.DataFrame(rows)
 
@@ -289,8 +293,8 @@ def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Valutazione leave-one-game-out H/A/D su partite Metrica")
     parser.add_argument("metrica_dir")
-    parser.add_argument("--objective", default="accuratezza_tutti",
-                        choices=["accuratezza_tutti", "D_f1", "cambi_f1", "accuratezza_HA"])
+    parser.add_argument("--objective", default="spellF1",
+                        choices=["spellF1", "macroF1", "accuratezza_tutti", "D_f1", "cambi_f1", "accuratezza_HA"])
     parser.add_argument("--dead-ball-uses-ball", action="store_true")
     parser.add_argument("--output", default="outputs/model_dah_cv.json")
     args = parser.parse_args(argv)
