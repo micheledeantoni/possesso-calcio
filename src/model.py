@@ -25,6 +25,7 @@ from itertools import product
 from pathlib import Path
 import json
 import math
+import os
 import numpy as np
 import pandas as pd
 
@@ -32,8 +33,19 @@ from src.arrays import load_metrica_npz
 from src.team_features import build_team_features, feature_columns, continuity
 
 LABELS = np.array(["H", "A"])
+# Parametri di entrambi i classificatori (H/A qui, gioco fermo in src/model_dah.py).
+# min_samples_leaf e max_features (A3): i frame sono 25 al secondo e quasi identici fra
+# vicini, quindi una foglia deve raccogliere almeno 1.000 frame (40 s di gioco) e ogni
+# albero vede metà delle feature. Scelti in leave-one-game-out su Metrica: spellF1 medio
+# da 0,603 a 0,616, migliore in tutte e tre le partite (docs/audit_drive/a3_regolarizzazione.txt).
 CLASSIFIER_PARAMS = dict(max_iter=150, learning_rate=0.1, max_leaf_nodes=15,
-                         l2_regularization=1.0, random_state=42)
+                         l2_regularization=1.0, min_samples_leaf=1000, max_features=0.5,
+                         random_state=42)
+# Per confrontare impostazioni diverse senza toccare il codice, per esempio:
+#   POSSESSO_CLASSIFIER_PARAMS='{"min_samples_leaf": 1000}' python -m src.model_dah data/metrica
+# Le chiavi indicate sostituiscono quelle sopra, per quella sola esecuzione.
+if os.environ.get("POSSESSO_CLASSIFIER_PARAMS"):
+    CLASSIFIER_PARAMS.update(json.loads(os.environ["POSSESSO_CLASSIFIER_PARAMS"]))
 DEFAULT_GRID = {"temperature": (0.05, 0.1, 0.2, 0.5, 1.0),
                 "switch_scale": (0.25, 0.5, 1.0, 2.0, 4.0),
                 "neutral_without_ball": (False, True)}

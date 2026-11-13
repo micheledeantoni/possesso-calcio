@@ -203,3 +203,15 @@ class AugmentationTests(unittest.TestCase):
         for names, test in zip(seen, ("p1", "p2", "p3")):
             self.assertNotIn(test, [n for n, _ in names])
             self.assertEqual(len(names), 4)  # due partite, ognuna nella versione principale e in quella in più
+
+
+class ClassifierParamsTests(unittest.TestCase):
+    def test_environment_overrides_only_the_given_keys(self):
+        import json, os, subprocess, sys
+        env = dict(os.environ, POSSESSO_CLASSIFIER_PARAMS='{"min_samples_leaf": 1000, "max_features": 0.5}')
+        out = subprocess.run([sys.executable, "-c", "import json; from src.model import CLASSIFIER_PARAMS as p; print(json.dumps(p))"],
+                             env=env, capture_output=True, text=True, check=True, cwd=str(Path(__file__).resolve().parents[1]))
+        params = json.loads(out.stdout)
+        self.assertEqual(params["min_samples_leaf"], 1000)
+        self.assertEqual(params["max_features"], 0.5)
+        self.assertEqual(params["max_iter"], 150)  # le altre chiavi restano quelle di default

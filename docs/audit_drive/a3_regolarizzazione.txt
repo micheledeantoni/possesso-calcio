@@ -1,0 +1,16 @@
+# A3: regolarizzazione dei classificatori (13 novembre 2026)
+# Comando: POSSESSO_CLASSIFIER_PARAMS='<json>' python -m src.model_dah data/metrica --extra data/metrica_extra_1 --extra data/metrica_extra_2
+# Dati: Train set del gruppo + due sporcature in più; valutazione annidata leave-one-game-out; obiettivo spellF1; sklearn 1.9.1.
+# Parametri di partenza: max_iter 150, learning_rate 0,1, max_leaf_nodes 15, l2_regularization 1.
+
+c0 riferimento                  (nessuna modifica)
+c1 foglie1000                   {"min_samples_leaf": 1000}
+c2 foglie1000_feat05  SCELTA     {"min_samples_leaf": 1000, "max_features": 0.5}
+c3 lento_senza_stop             {"min_samples_leaf": 1000, "learning_rate": 0.05, "max_iter": 300, "early_stopping": false}
+c4 foglie2000_l2                {"min_samples_leaf": 2000, "l2_regularization": 5.0}
+
+== c0_riferimento | spellF1 media 0.6034 | macroF1 0.8611 | per partita 0.623 / 0.608 / 0.579 | temp [0.2, 0.2, 0.2] scala [2.0, 8.0, 4.0]
+== c1_foglie1000 | spellF1 media 0.6124 | macroF1 0.8620 | per partita 0.631 / 0.616 / 0.590 | temp [0.2, 0.2, 0.2] scala [8.0, 16.0, 1.0]
+== c2_foglie1000_feat05 | spellF1 media 0.6160 | macroF1 0.8629 | per partita 0.637 / 0.611 / 0.601 | temp [0.2, 0.2, 0.2] scala [8.0, 8.0, 8.0]
+== c3_lento_senza_stop | spellF1 media 0.6136 | macroF1 0.8629 | per partita 0.636 / 0.613 / 0.591 | temp [0.2, 0.2, 0.2] scala [8.0, 8.0, 2.0]
+== c4_foglie2000_l2 | spellF1 media 0.5950 | macroF1 0.8625 | per partita 0.564 / 0.616 / 0.604 | temp [0.1, 0.2, 0.2] scala [1.0, 8.0, 8.0]
