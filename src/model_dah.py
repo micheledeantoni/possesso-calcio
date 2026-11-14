@@ -32,9 +32,12 @@ from src.dead_ball_features import build_dead_ball_features, dead_ball_columns
 from src.model import CLASSIFIER_PARAMS, EPSILON, LABELS as HA, fit_classifier, log_evidence, evaluate, _breaks, _challenge
 
 STATES = np.array(["H", "A", "D"])
-DEFAULT_GRID = {"temperature": (0.03, 0.05, 0.1, 0.2),
-                "switch_scale": (1.0, 2.0, 4.0, 8.0, 16.0),
-                "neutral_without_ball": (False, True)}
+DEFAULT_GRID = {
+    "temperature": (0.03, 0.05, 0.1, 0.2),
+    "switch_scale": (1.0, 2.0, 4.0, 8.0, 16.0),
+    "neutral_without_ball": (False, True),
+    "w": (0.34,),
+}
 
 
 @dataclass
@@ -51,16 +54,23 @@ class DahGame:
 class DahModel:
     ha_classifier: object
     ha_columns: list
-    ha_prior: dict
-    dead_classifier: object
-    dead_columns: list
-    dead_prior: float
+    ha_prior: float
+    dead_without: tuple
+    dead_with: tuple
     transitions: np.ndarray
     params: dict
-    dead_ball_uses_ball: bool = False
-    training_games: list = field(default_factory=list)
-    sklearn_version: str = ""
+    training_games: list
+    sklearn_version: str
 
+    @property
+    def dead_columns(self):
+        """Colonne del classificatore D senza palla."""
+        return self.dead_without[1]
+
+    @property
+    def dead_ball_uses_ball(self):
+        """Il modello combinato usa anche il classificatore con palla."""
+        return False
 
 def load_dah_games(folder, ball_speed_max_ms=40.0, primary=True, **feature_options):
     """Partite di una cartella. Il nome del file identifica la partita: versioni
@@ -109,36 +119,93 @@ def _dead_matrix(game, columns, uses_ball):
     return game.dead_features[columns]
 
 
+
+
 def fit_dead_classifier(games, uses_ball=False):
     from sklearn.ensemble import HistGradientBoostingClassifier
-    columns = dead_ball_columns(games[0].dead_features)
-    if uses_ball:
-        columns += [c for c in feature_columns(games[0].features) if c != "ball_source"]
-    X = pd.concat([_dead_matrix(g, columns, uses_ball) for g in games])
-    y = np.concatenate([g.labels == "D" for g in games])
-    columns = [c for c in columns if X[c].nunique(dropna=False) > 1]
-    classifier = HistGradientBoostingClassifier(**CLASSIFIER_PARAMS).fit(X[columns], y)
-    return classifier, columns, float(y.mean())
+
+    def fit_one(use_ball):
+        columns = dead_ball_columns(games[0].dead_features)
+
+        if use_ball:
+            columns += [
+                c for c in feature_columns(games[0].features)
+                if c != "ball_source"
+            ]
+
+        X = pd.concat([
+            _dead_matrix(g, columns, use_ball) for g in games
+        ])
+        y = np.concatenate([g.labels == "D" for g in games])
+
+        columns = [
+            c for c in columns
+            if X[c].nunique(dropna=False) > 1
+        ]
+
+        classifier = HistGradientBoostingClassifier(
+            **CLASSIFIER_PARAMS
+        ).fit(X[columns], y)
+
+        return classifier, columns, float(y.mean())
+
+    return fit_one(False), fit_one(True)
 
 
 def evidence_parts(model_parts, game):
-    """Componenti dell'evidenza: log-rapporti per D, ¬D, H|¬D, A|¬D."""
-    ha_clf, ha_cols, ha_prior, d_clf, d_cols, d_prior, uses_ball = model_parts
-    p_dead = d_clf.predict_proba(_dead_matrix(game, d_cols, uses_ball))[:, list(d_clf.classes_).index(True)]
-    p_dead = np.clip(p_dead, EPSILON, 1 - EPSILON)
-    ha = log_evidence(ha_clf, ha_cols, ha_prior, game.features)  # colonne H, A
-    return {"D": np.log(p_dead) - math.log(d_prior),
-            "live": np.log1p(-p_dead) - math.log1p(-d_prior),
-            "H": ha[:, 0], "A": ha[:, 1],
-            "ball": game.features["ball_available"].to_numpy() == 1}
+    """Componenti dell'evidenza per H, A e D."""
+
+    ha_clf, ha_cols, ha_prior, dead_without, dead_with = model_parts
+
+    d0_clf, d0_cols, d0_prior = dead_without
+    d1_clf, d1_cols, d1_prior = dead_with
+
+    p_without = d0_clf.predict_proba(
+        _dead_matrix(game, d0_cols, False)
+    )[:, list(d0_clf.classes_).index(True)]
+
+    p_with = d1_clf.predict_proba(
+        _dead_matrix(game, d1_cols, True)
+    )[:, list(d1_clf.classes_).index(True)]
+
+    p_without = np.clip(p_without, EPSILON, 1 - EPSILON)
+    p_with = np.clip(p_with, EPSILON, 1 - EPSILON)
+
+    ha = log_evidence(ha_clf, ha_cols, ha_prior, game.features)
+
+    return {
+        "p_dead_without": p_without,
+        "p_dead_with": p_with,
+        "dead_prior": d0_prior,
+        "H": ha[:, 0],
+        "A": ha[:, 1],
+        "ball": game.features["ball_available"].to_numpy() == 1
+    }
 
 
 def emissions(parts, params):
-    h, a = parts["H"], parts["A"]
-    if params["neutral_without_ball"]:
-        h, a = np.where(parts["ball"], h, 0.0), np.where(parts["ball"], a, 0.0)
-    return params["temperature"] * np.column_stack([parts["live"] + h, parts["live"] + a, parts["D"]])
+    w = params.get("w", 0.0)
+    p_dead = (
+        w * parts["p_dead_with"]
+        + (1 - w) * parts["p_dead_without"]
+    )
+    p_dead = np.clip(p_dead, EPSILON, 1 - EPSILON)
+    dead_prior = parts["dead_prior"]
 
+    d = np.log(p_dead) - math.log(dead_prior)
+    live = np.log1p(-p_dead) - math.log1p(-dead_prior)
+
+    h, a = parts["H"], parts["A"]
+
+    if params["neutral_without_ball"]:
+        h = np.where(parts["ball"], h, 0.0)
+        a = np.where(parts["ball"], a, 0.0)
+
+    return params["temperature"] * np.column_stack([
+        live + h,
+        live + a,
+        d
+    ])
 
 def viterbi_k(log_emission, log_transition, continuous):
     """Viterbi a K stati; dove `continuous` è False la transizione è uniforme."""
@@ -227,8 +294,10 @@ def evaluate_dah(true, pred, tolerance_frames=125, fps=25, breaks=None):
 
 def _parts_for(train, test, uses_ball):
     ha = fit_classifier(train)
-    dead = fit_dead_classifier(train, uses_ball)
-    return evidence_parts((*ha, *dead, uses_ball), test)
+
+    dead_without, dead_with = fit_dead_classifier(train)
+
+    return evidence_parts((*ha, dead_without, dead_with), test)
 
 
 def _grid(grid):
@@ -238,49 +307,129 @@ def _grid(grid):
 
 def select_params(games, grid=None, objective="spellF1", uses_ball=False):
     grid = DEFAULT_GRID if grid is None else grid
+
     if len(games) < 2:
         raise ValueError("Servono almeno due partite per scegliere i parametri")
+
     names = list(dict.fromkeys(g.name for g in games))
     if len(names) < 2:
         raise ValueError("Servono almeno due partite diverse per scegliere i parametri")
+
     held_out = []
     for name in names:
         others = [g for g in games if g.name != name]
         game = next((g for g in games if g.name == name and g.primary), None)
         game = game or next(g for g in games if g.name == name)
-        held_out.append((game, _parts_for(others, game, uses_ball), transition_matrix(others)))
+        held_out.append((
+            game,
+            _parts_for(others, game, uses_ball),
+            transition_matrix(others)
+        ))
+
     best, best_score = None, -math.inf
+
     for params in _grid(grid):
-        results = [evaluate_dah(g.labels, decode(parts, g.continuous, t, params), breaks=_breaks(g.continuous))
-                   for g, parts, t in held_out]
+        results = []
+        falsi_d = 0
+        frame_palla_assente_vivo = 0
+
+        for g, parts, t in held_out:
+            pred = decode(parts, g.continuous, t, params)
+
+            results.append(
+                evaluate_dah(
+                    g.labels,
+                    pred,
+                    breaks=_breaks(g.continuous)
+                )
+            )
+
+            live_missing = (
+                (g.labels != "D")
+                & (g.features.ball_available.to_numpy() == 0)
+            )
+
+            falsi_d += int(np.sum(pred[live_missing] == "D"))
+            frame_palla_assente_vivo += int(np.sum(live_missing))
+
+        if frame_palla_assente_vivo:
+            tasso_falsi_d = falsi_d / frame_palla_assente_vivo
+        else:
+            tasso_falsi_d = 0.0
+
+        if tasso_falsi_d > 0.30:
+            continue
+
         weights = [len(g.labels) for g, _, _ in held_out]
-        score = float(np.average([r[objective] for r in results], weights=weights))
+        score = float(np.average(
+            [r[objective] for r in results],
+            weights=weights
+        ))
+
         if score > best_score:
             best, best_score = params, score
+
+    if best is None:
+        raise ValueError(
+            "Nessuna combinazione di parametri rispetta il limite "
+            "del 30% di falsi D"
+        )
+
     return best
 
 
 def fit_dah_model(games, grid=None, objective="spellF1", uses_ball=False):
     import sklearn
+
     params = select_params(games, grid, objective, uses_ball)
+
     ha_clf, ha_cols, ha_prior = fit_classifier(games)
-    d_clf, d_cols, d_prior = fit_dead_classifier(games, uses_ball)
-    return DahModel(ha_clf, ha_cols, ha_prior, d_clf, d_cols, d_prior, transition_matrix(games), params,
-                    uses_ball, [g.name for g in games], sklearn.__version__)
+
+    dead_without, dead_with = fit_dead_classifier(games)
+
+    return DahModel(
+        ha_clf,
+        ha_cols,
+        ha_prior,
+        dead_without,
+        dead_with,
+        transition_matrix(games),
+        params,
+        [g.name for g in games],
+        sklearn.__version__
+    )
 
 
 def predict_dah(model, features, dead_features, continuous, probabilities=False):
-    """Etichette H/A/D per frame; con `probabilities` anche p_H, p_A, p_D (forward-backward)."""
+    """Etichette H/A/D per frame; con probabilities anche le probabilità."""
+
     game = DahGame("run", features, dead_features, np.array([]), continuous)
-    parts = evidence_parts((model.ha_classifier, model.ha_columns, model.ha_prior, model.dead_classifier,
-                            model.dead_columns, model.dead_prior, model.dead_ball_uses_ball), game)
+
+    parts = evidence_parts((
+        model.ha_classifier,
+        model.ha_columns,
+        model.ha_prior,
+        model.dead_without,
+        model.dead_with
+    ), game)
+
     labels = decode(parts, continuous, model.transitions, model.params)
-    result = pd.DataFrame({"frame": features["frame"].to_numpy(), "label": labels})
+    result = pd.DataFrame({
+        "frame": features["frame"].to_numpy(),
+        "label": labels
+    })
+
     if probabilities:
-        log_t = np.log(scaled_transitions(model.transitions, model.params["switch_scale"]))
-        post = posteriors(emissions(parts, model.params), log_t, continuous)
+        log_t = np.log(
+            scaled_transitions(model.transitions, model.params["switch_scale"])
+        )
+        post = posteriors(
+            emissions(parts, model.params), log_t, continuous
+        )
+
         for j, state in enumerate(STATES):
             result[f"p_{state}"] = post[:, j]
+
     return result
 
 
