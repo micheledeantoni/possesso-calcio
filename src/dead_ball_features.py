@@ -174,6 +174,7 @@ BALL_OUT_MARGIN_M = 0.5       # "fuori" solo se oltre la linea di almeno mezzo m
 OUT_MEMORY_CAP_S = 30.0
 RESTART_SIDELINE_M = 1.5      # ricomparsa sulla linea laterale (rimessa)
 RESTART_LOOKAHEAD_S = 20.0    # buco massimo prima di una ripresa
+RESTART_HOLD_S = 1.0          # sulla linea laterale: ferma almeno 1 s per contare come rimessa
 
 
 def _still_run_seconds(still, fps):
@@ -303,10 +304,15 @@ def ball_position_features(tracking, *, fps=25):
     # in un contrasto (palla vista in campo prima e dopo) resta a 0.
     out_seen = seen & np.nan_to_num(beyond > BALL_OUT_MARGIN_M, nan=False)
     in_seen = seen & ~out_seen
-    restart_point = seen & np.nan_to_num(
-        (beyond > 0) | (np.fmin(by, width - by) <= RESTART_SIDELINE_M) | (d_corner <= CORNER_RADIUS_M)
-        | in_goal_area | (d_center <= CENTER_RADIUS_M) | (d_spot <= SPOT_RADIUS_M), nan=False)
     not_moving = ~(np.isfinite(speed) & (speed >= BALL_STILL_MS))
+    # Linea laterale: conta come rimessa solo se la palla ricompare fuori dal campo
+    # (beyond > 0, sotto) oppure resta ferma sulla linea per almeno RESTART_HOLD_S.
+    # Una palla che ricompare vicino alla linea e riparte subito è gioco vivo.
+    on_sideline = seen & np.nan_to_num(np.fmin(by, width - by) <= RESTART_SIDELINE_M, nan=False)
+    sideline_hold = _holds_for(on_sideline & not_moving, block, int(RESTART_HOLD_S * fps))
+    restart_point = seen & (np.nan_to_num(
+        (beyond > 0) | (d_corner <= CORNER_RADIUS_M) | in_goal_area
+        | (d_center <= CENTER_RADIUS_M) | (d_spot <= SPOT_RADIUS_M), nan=False) | sideline_hold)
     frame["ball_out_memory_s"] = _out_memory(out_seen, in_seen, block, fps, OUT_MEMORY_CAP_S)
     frame["ball_restart_ahead"] = _restart_ahead(seen, restart_point, not_moving, block,
                                                  int(RESTART_LOOKAHEAD_S * fps))
@@ -332,6 +338,18 @@ def _out_memory(out_seen, in_seen, block, fps, cap_s):
         if last_out is not None:
             result[i] = min((i - last_out + 1) / fps, cap_s)
     return result
+
+
+def _holds_for(condition, block, frames):
+    """True dove `condition` resta vera per almeno `frames` frame consecutivi da lì
+    in avanti, senza cambiare tratto continuo."""
+    n = len(condition)
+    ahead = np.zeros(n, dtype=int)  # quanti frame consecutivi veri a partire da i
+    for i in range(n - 1, -1, -1):
+        if condition[i]:
+            same = i + 1 < n and block[i + 1] == block[i]
+            ahead[i] = 1 + (ahead[i + 1] if same else 0)
+    return ahead >= frames
 
 
 def _restart_ahead(seen, restart_point, not_moving, block, lookahead):

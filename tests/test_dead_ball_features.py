@@ -194,6 +194,16 @@ class BallPositionTests(unittest.TestCase):
         self.assertEqual(f.ball_restart_ahead[160], 1.)  # ancora ferma lì
         self.assertEqual(f.ball_restart_ahead[185], 0.)  # ripartita (di nuovo in campo, in moto)
 
+    def test_restart_ahead_ignores_live_ball_near_sideline(self):
+        data = formation(n=200)
+        data.ball[:] = np.column_stack([30. + .3 * np.arange(200), np.full(200, 67.)])
+        data.ball[60:100] = np.nan  # buco a gioco vivo, la palla ricompare vicino alla linea e corre
+        self.assertTrue((ball_position_features(data).ball_restart_ahead == 0).all())
+        data.ball[100:160] = (60., 67.5)  # ricompare sulla linea e resta ferma: rimessa
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_restart_ahead[80], 1.)
+        self.assertEqual(f.ball_restart_ahead[120], 1.)
+
     def test_uses_pitch_size(self):
         data = formation(pitch=(105.3, 68.))
         data.ball[:] = (52.65, 34.)
