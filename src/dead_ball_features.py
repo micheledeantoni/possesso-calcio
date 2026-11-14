@@ -170,6 +170,10 @@ GOAL_HALF_WIDTH_M = 3.66
 KEEPER_LINE_M = 1.5           # portiere "sulla linea": entro 1,5 m dalla linea di porta
 PENALTY_SETUP_SPOT_M = 1.0    # palla entro 1 m dal dischetto
 PENALTY_SETUP_MAX_IN_AREA = 3 # portiere + rigorista + un margine
+BALL_OUT_MARGIN_M = 0.5       # "fuori" solo se oltre la linea di almeno mezzo metro (rumore)
+OUT_MEMORY_CAP_S = 30.0
+RESTART_SIDELINE_M = 1.5      # ricomparsa sulla linea laterale (rimessa)
+RESTART_LOOKAHEAD_S = 20.0    # buco massimo prima di una ripresa
 
 
 def _still_run_seconds(still, fps):
@@ -206,7 +210,14 @@ def ball_position_features(tracking, *, fps=25):
       a distanza, avversari lontani);
     - throw_in_setup: palla vicino alla linea laterale con un giocatore oltre la linea;
     - penalty_setup: palla ferma sul dischetto, un giocatore sulla linea di porta
-      (il portiere) e al massimo tre giocatori in quell'area: il rigore schierato.
+      (il portiere) e al massimo tre giocatori in quell'area: il rigore schierato;
+    - ball_out_memory_s: secondi da quando la palla è stata vista fuori dal campo,
+      finché non ricompare in campo (anche nei frame senza palla);
+    - ball_restart_ahead: la palla, dopo un buco, ricompare su un punto di ripresa
+      (anche nei frame senza palla, prima della ricomparsa).
+    Le ultime due sono le uniche che possono valere più di 0 senza palla: lo fanno
+    solo se la palla vista prima (fuori) o dopo (su un punto di ripresa) dice "gioco
+    fermo". Un buco in un contrasto, con la palla vista in campo prima e dopo, resta a 0.
     Misure dal campo di `tracking.pitch`.
     """
     if tracking.pitch is None:
@@ -286,7 +297,66 @@ def ball_position_features(tracking, *, fps=25):
     columns = [c for c in frame.columns if c != "frame"]
     for column in columns:  # palla assente = nessun indizio
         frame[column] = np.where(seen & np.isfinite(frame[column]), frame[column], 0.0)
+
+    # Bordi delle pause. Queste due valgono anche quando la palla non si vede, ma solo
+    # se l'ultima o la prossima volta che si vede dice "gioco fermo": un buco di palla
+    # in un contrasto (palla vista in campo prima e dopo) resta a 0.
+    out_seen = seen & np.nan_to_num(beyond > BALL_OUT_MARGIN_M, nan=False)
+    in_seen = seen & ~out_seen
+    restart_point = seen & np.nan_to_num(
+        (beyond > 0) | (np.fmin(by, width - by) <= RESTART_SIDELINE_M) | (d_corner <= CORNER_RADIUS_M)
+        | in_goal_area | (d_center <= CENTER_RADIUS_M) | (d_spot <= SPOT_RADIUS_M), nan=False)
+    not_moving = ~(np.isfinite(speed) & (speed >= BALL_STILL_MS))
+    frame["ball_out_memory_s"] = _out_memory(out_seen, in_seen, block, fps, OUT_MEMORY_CAP_S)
+    frame["ball_restart_ahead"] = _restart_ahead(seen, restart_point, not_moving, block,
+                                                 int(RESTART_LOOKAHEAD_S * fps))
     return frame
+
+
+def _out_memory(out_seen, in_seen, block, fps, cap_s):
+    """Secondi da quando la palla è stata vista fuori, finché non torna in campo.
+
+    Vale anche nei frame senza palla: se l'ultima volta che si vedeva era fuori,
+    il gioco è ancora fermo. Si azzera quando la palla ricompare in campo o
+    cambia il tratto continuo. 0 = nessun indizio.
+    """
+    result = np.zeros(len(out_seen))
+    last_out = None
+    for i in range(len(out_seen)):
+        if i and block[i] != block[i - 1]:
+            last_out = None
+        if out_seen[i]:
+            last_out = i
+        elif in_seen[i]:
+            last_out = None
+        if last_out is not None:
+            result[i] = min((i - last_out + 1) / fps, cap_s)
+    return result
+
+
+def _restart_ahead(seen, restart_point, not_moving, block, lookahead):
+    """1 nei frame che precedono una ripresa: la palla, dopo un buco di al massimo
+    `lookahead` frame, ricompare su un punto di ripresa (linea laterale, bandierina,
+    area piccola, centro, dischetto, fuori). Vale 1 anche finché, ricomparsa lì,
+    resta ferma. Guarda nel futuro: le feature sono offline, come le finestre
+    `_future_` già presenti."""
+    n = len(seen)
+    result = np.zeros(n)
+    i = 0
+    while i < n:
+        if seen[i]:
+            i += 1
+            continue
+        start = i
+        while i < n and not seen[i] and block[i] == block[start]:
+            i += 1
+        if i < n and seen[i] and block[i] == block[start] and i - start <= lookahead and restart_point[i]:
+            result[start:i] = 1.0
+            j = i
+            while j < n and seen[j] and not_moving[j] and restart_point[j] and block[j] == block[i]:
+                result[j] = 1.0
+                j += 1
+    return result
 
 
 def build_dead_features(tracking, *, fps=25, use_ball=True):

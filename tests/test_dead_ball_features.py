@@ -100,7 +100,8 @@ class DeadBallFeatureTests(unittest.TestCase):
 
 BALL_COLUMNS = ["ball_out_m", "ball_still_s", "ball_still_center", "ball_still_penalty_spot", "ball_still_corner",
                 "ball_still_goal_area", "ball_still_penalty_area", "ball_still_open_field",
-                "ball_still_with_holder", "ball_still_free_space", "throw_in_setup", "penalty_setup"]
+                "ball_still_with_holder", "ball_still_free_space", "throw_in_setup", "penalty_setup",
+                "ball_out_memory_s", "ball_restart_ahead"]
 
 
 class BallPositionTests(unittest.TestCase):
@@ -163,6 +164,35 @@ class BallPositionTests(unittest.TestCase):
         self.assertEqual(f.penalty_setup[40], 1.)
         data.players[:, 1:4] = [(97., 25.), (98., 40.), (96., 30.)]  # area affollata: non è un rigore
         self.assertEqual(ball_position_features(data).penalty_setup[40], 0.)
+
+    def test_out_memory_lasts_while_ball_is_missing(self):
+        data = formation(n=200)
+        data.ball[:20] = np.column_stack([60. + np.zeros(20), 62. + .4 * np.arange(20)])  # esce di lato a 10 m/s
+        data.ball[20:150] = np.nan                                                        # poi sparisce
+        data.ball[150:] = (60., 50.)                                                      # ricompare in campo
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_out_memory_s[5], 0.)          # ancora in campo
+        self.assertGreater(f.ball_out_memory_s[19], 0.)       # vista fuori
+        self.assertGreater(f.ball_out_memory_s[100], 3.)      # senza palla, ma era fuori
+        self.assertEqual(f.ball_out_memory_s[150], 0.)        # tornata in campo
+
+    def test_contest_gap_gives_no_signal(self):
+        data = formation(n=200)
+        data.ball[:] = np.column_stack([30. + .3 * np.arange(200), np.full(200, 40.)])  # palla in gioco
+        data.ball[80:130] = np.nan                                                      # buco in un contrasto
+        f = ball_position_features(data)
+        self.assertTrue((f.loc[60:150, ["ball_out_memory_s", "ball_restart_ahead"]] == 0).all().all())
+
+    def test_restart_ahead_marks_gap_before_a_corner(self):
+        data = formation(n=200)
+        data.ball[:] = np.column_stack([60. + .3 * np.arange(200), np.full(200, 40.)])
+        data.ball[60:150] = np.nan
+        data.ball[150:180] = (105., 68.)  # ricompare ferma alla bandierina
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_restart_ahead[59], 0.)
+        self.assertEqual(f.ball_restart_ahead[100], 1.)
+        self.assertEqual(f.ball_restart_ahead[160], 1.)  # ancora ferma lì
+        self.assertEqual(f.ball_restart_ahead[185], 0.)  # ripartita (di nuovo in campo, in moto)
 
     def test_uses_pitch_size(self):
         data = formation(pitch=(105.3, 68.))
