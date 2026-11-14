@@ -2,7 +2,7 @@ import math
 import unittest
 import numpy as np
 from src.arrays import TrackingArrays
-from src.dead_ball_features import build_dead_ball_features, window_mean
+from src.dead_ball_features import build_dead_ball_features, build_dead_features, ball_position_features, window_mean
 
 
 def formation(n=60, segment=None, pitch=(105., 68.)):
@@ -96,6 +96,87 @@ class DeadBallFeatureTests(unittest.TestCase):
         data.pitch = None
         with self.assertRaises(ValueError):
             build_dead_ball_features(data)
+
+
+BALL_COLUMNS = ["ball_out_m", "ball_still_s", "ball_still_center", "ball_still_penalty_spot", "ball_still_corner",
+                "ball_still_goal_area", "ball_still_penalty_area", "ball_still_open_field",
+                "ball_still_with_holder", "ball_still_free_space", "throw_in_setup", "penalty_setup"]
+
+
+class BallPositionTests(unittest.TestCase):
+    def test_ball_still_on_penalty_spot_then_moving(self):
+        data = formation(n=125)  # 2 s ferma sul dischetto destro, poi 3 s a 10 m/s
+        data.ball[:50] = (105. - 11., 34.)
+        data.ball[50:] = np.column_stack([94. - .4 * np.arange(1, 76), np.full(75, 34.)])
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_still_penalty_spot[20], 0.)  # ferma, ma non ancora da 1 s
+        self.assertEqual(f.ball_still_penalty_spot[49], 1.)
+        self.assertGreaterEqual(f.ball_still_s[49], 1.)
+        self.assertEqual(f.ball_still_penalty_area[49], 1.)
+        self.assertEqual(f.ball_still_open_field[49], 0.)
+        self.assertTrue((f.loc[70:, BALL_COLUMNS] == 0).all().all())  # in movimento: nessun indizio
+
+    def test_missing_ball_gives_no_signal(self):
+        f = ball_position_features(formation())  # palla mai vista
+        self.assertFalse(f[BALL_COLUMNS].isna().any().any())
+        self.assertTrue((f[BALL_COLUMNS] == 0).all().all())
+
+    def test_short_gap_resets_still_time(self):
+        data = formation(n=100)
+        data.ball[:] = (52.5, 34.)
+        data.ball[40:45] = np.nan  # sparisce per 0,2 s
+        f = ball_position_features(data)
+        self.assertGreater(f.ball_still_center[39], 0.)
+        self.assertEqual(f.ball_still_center[42], 0.)
+        self.assertEqual(f.ball_still_s[50], 0.)  # riparte da zero: niente riempimento
+        self.assertEqual(f.ball_still_center[99], 1.)
+
+    def test_ball_out_and_throw_in(self):
+        data = formation()
+        data.ball[:] = (30., -1.)
+        f = ball_position_features(data)
+        self.assertAlmostEqual(f.ball_out_m[0], 1.)
+        self.assertEqual(f.throw_in_setup[0], 0.)  # nessun giocatore oltre la linea
+        data.players[:, 0] = (30.5, -.8)
+        f = ball_position_features(data)
+        self.assertEqual(f.throw_in_setup[0], 1.)
+        self.assertEqual(f.ball_still_with_holder[40], 1.)
+
+    def test_free_kick_in_open_field(self):
+        data = formation()
+        data.ball[:] = (40., 60.)  # lontano da tutti, fuori dalle aree
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_still_open_field[40], 1.)
+        self.assertEqual(f.ball_still_free_space[40], 1.)
+        self.assertEqual(f.ball_still_corner[40], 0.)
+
+    def test_penalty_setup(self):
+        data = formation()  # nessuno nelle aree
+        data.ball[:] = (105. - 11., 34.)
+        f = ball_position_features(data)
+        self.assertEqual(f.ball_still_penalty_spot[40], 1.)
+        self.assertEqual(f.penalty_setup[40], 0.)  # manca il portiere sulla linea
+        data.players[:, 21] = (104.8, 34.5)  # portiere ospite sulla linea
+        data.players[:, 0] = (92.5, 34.)     # rigorista
+        f = ball_position_features(data)
+        self.assertEqual(f.penalty_setup[20], 0.)  # palla ferma da meno di 1 s
+        self.assertEqual(f.penalty_setup[40], 1.)
+        data.players[:, 1:4] = [(97., 25.), (98., 40.), (96., 30.)]  # area affollata: non è un rigore
+        self.assertEqual(ball_position_features(data).penalty_setup[40], 0.)
+
+    def test_uses_pitch_size(self):
+        data = formation(pitch=(105.3, 68.))
+        data.ball[:] = (52.65, 34.)
+        self.assertEqual(ball_position_features(data).ball_still_center[40], 1.)
+        data.ball[:] = (105.3, 0.)
+        self.assertEqual(ball_position_features(data).ball_still_corner[40], 1.)
+
+    def test_combined_table(self):
+        data = formation()
+        players_only = build_dead_features(data, use_ball=False)
+        both = build_dead_features(data)
+        self.assertEqual(list(players_only.columns), list(build_dead_ball_features(data).columns))
+        self.assertEqual(list(both.columns), list(players_only.columns) + BALL_COLUMNS)
 
 
 if __name__ == "__main__":

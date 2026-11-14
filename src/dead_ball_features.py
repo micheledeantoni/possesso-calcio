@@ -14,6 +14,10 @@ invece cosa fanno i giocatori quando il gioco è fermo:
 Tutte simmetriche rispetto al verso di attacco (aree e linee considerate da entrambi
 i lati). Soglie geometriche dal regolamento (aree, centro); soglie di velocità fissate
 a priori, non calibrate sulla challenge. NaN = informazione assente.
+
+`ball_position_features` aggiunge la palla quando si vede (fuori dalle linee, ferma,
+ferma su un punto di ripresa) senza mai segnalare la sua assenza;
+`build_dead_features` mette insieme le due tabelle per il classificatore.
 """
 import warnings
 import numpy as np
@@ -148,6 +152,150 @@ def build_dead_ball_features(tracking, *, fps=25, player_speed_max_ms=12.0, slow
     for key in ("home_centroid_x_from_mid", "away_centroid_x_from_mid"):
         out[key] = np.abs(out[key])  # distanza dalla metà campo, senza verso
     return pd.DataFrame(out)
+
+
+PENALTY_SPOT_M = 11.0
+BALL_STILL_MS = 0.5        # sotto questa velocità la palla è "ferma"
+BALL_SPEED_WINDOW_S = 0.4  # velocità media su questo intervallo: smorza il rumore del tracking
+BALL_STILL_MIN_S = 1.0     # ferma da almeno questo tempo
+BALL_STILL_CAP_S = 5.0
+SPOT_RADIUS_M = 2.0        # dischetto
+CENTER_RADIUS_M = 3.0      # centro del campo
+CORNER_RADIUS_M = 3.0      # bandierina
+HOLDER_RADIUS_M = 1.0      # un giocatore "sulla palla" (es. portiere che la tiene)
+FREE_SPACE_RADIUS_M = 9.0  # nelle punizioni gli avversari stanno a 9,15 m
+THROW_IN_LINE_M = 2.0
+THROW_IN_PLAYER_M = 3.0
+GOAL_HALF_WIDTH_M = 3.66
+KEEPER_LINE_M = 1.5           # portiere "sulla linea": entro 1,5 m dalla linea di porta
+PENALTY_SETUP_SPOT_M = 1.0    # palla entro 1 m dal dischetto
+PENALTY_SETUP_MAX_IN_AREA = 3 # portiere + rigorista + un margine
+
+
+def _still_run_seconds(still, fps):
+    """Per ogni frame, da quanti secondi `still` è vero senza interruzioni."""
+    run = np.zeros(len(still))
+    count = 0
+    for i, s in enumerate(still):
+        count = count + 1 if s else 0
+        run[i] = count
+    return run / fps
+
+
+def ball_position_features(tracking, *, fps=25):
+    """Feature della palla per il gioco fermo, una riga per frame.
+
+    Ogni feature è un "indizio di palla morta": 0 = nessun indizio. Quando la palla
+    non si vede valgono 0, mai NaN: così "palla assente" ha lo stesso aspetto di un
+    normale frame di gioco vivo e il classificatore non può usarla come scorciatoia
+    (nelle etichette Metrica D coincide quasi sempre con la palla assente).
+    Nessun riempimento con l'ultimo valore visto: una palla che sparisce in un
+    contrasto sembrerebbe ferma e creerebbe palle morte false.
+
+    - ball_out_m: metri oltre la linea più vicina (laterale o di fondo);
+    - ball_still_s: da quanti secondi la palla è ferma (fino a 5);
+    - ball_still_center / _penalty_spot / _corner: ferma da almeno 1 s su un punto
+      di ripresa (1 sul punto, scende a 0 al bordo del raggio);
+    - ball_still_goal_area: ferma in area piccola (rinvio dal fondo);
+    - ball_still_penalty_area: ferma in area di rigore, fuori dall'area piccola
+      (può essere anche il portiere che la tiene a gioco vivo);
+    - ball_still_open_field: ferma in campo, fuori dalle aree (punizione);
+    - ball_still_with_holder: ferma con un giocatore a meno di 1 m (portiere che la
+      tiene, giocatore che la sistema): da sola non decide, si combina con le altre;
+    - ball_still_free_space: ferma con al massimo due giocatori entro 9 m (barriera
+      a distanza, avversari lontani);
+    - throw_in_setup: palla vicino alla linea laterale con un giocatore oltre la linea;
+    - penalty_setup: palla ferma sul dischetto, un giocatore sulla linea di porta
+      (il portiere) e al massimo tre giocatori in quell'area: il rigore schierato.
+    Misure dal campo di `tracking.pitch`.
+    """
+    if tracking.pitch is None:
+        raise ValueError("Dimensioni del campo assenti")
+    length, width = tracking.pitch
+    ball = np.asarray(tracking.ball, dtype=float)
+    players = np.asarray(tracking.players, dtype=float)
+    n = len(ball)
+    seen = np.isfinite(ball).all(axis=1)
+    bx, by = ball[:, 0], ball[:, 1]
+    continuous = continuity(tracking.frames, tracking.segment)
+
+    # Velocità media su una finestra breve, solo se la palla si vede in tutta la finestra
+    # e la finestra non attraversa salti di frame o cambi di tempo.
+    steps = max(1, int(round(BALL_SPEED_WINDOW_S * fps)))
+    block = np.cumsum(~continuous)
+    speed = np.full(n, np.nan)
+    if n > steps:
+        seen_count = np.concatenate(([0], np.cumsum(seen)))
+        i = np.arange(steps, n)
+        ok = (seen_count[i + 1] - seen_count[i - steps] == steps + 1) & (block[i] == block[i - steps])
+        moved = np.hypot(bx[i] - bx[i - steps], by[i] - by[i - steps])
+        speed[i] = np.where(ok, moved / (steps / fps), np.nan)
+    still = np.isfinite(speed) & (speed < BALL_STILL_MS)
+    still_s = _still_run_seconds(still, fps)
+    settled = still_s >= BALL_STILL_MIN_S
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        beyond = np.fmax(np.fmax(-bx, bx - length), np.fmax(-by, by - width))
+        central = np.abs(by - width / 2)
+        goal_line = np.fmin(bx, length - bx)
+        in_pitch = (bx >= 0) & (bx <= length) & (by >= 0) & (by <= width)
+        in_penalty = in_pitch & (goal_line <= PENALTY_DEPTH_M) & (central <= PENALTY_HALF_WIDTH_M)
+        in_goal_area = in_pitch & (goal_line <= GOAL_AREA_DEPTH_M) & (central <= GOAL_AREA_HALF_WIDTH_M)
+        d_center = np.hypot(bx - length / 2, by - width / 2)
+        d_spot = np.hypot(goal_line - PENALTY_SPOT_M, by - width / 2)
+        d_corner = np.hypot(np.fmin(bx, length - bx), np.fmin(by, width - by))
+        to_ball = np.linalg.norm(players - ball[:, None], axis=2)
+        to_ball = np.where(np.isfinite(to_ball), to_ball, np.inf)
+        nearest = to_ball.min(axis=1) if players.shape[1] else np.full(n, np.inf)
+        crowd = (to_ball <= FREE_SPACE_RADIUS_M).sum(axis=1)
+        # Rigore: palla ferma sul dischetto, un giocatore sulla linea di porta (il portiere)
+        # e area quasi vuota (portiere, rigorista, al massimo un altro; gli altri fuori).
+        goal_x = np.where(bx < length / 2, 0.0, length)  # la porta dal lato della palla
+        px, py = players[..., 0], players[..., 1]
+        on_goal_line = (np.abs(px - goal_x[:, None]) <= KEEPER_LINE_M) & \
+                       (np.abs(py - width / 2) <= GOAL_HALF_WIDTH_M + KEEPER_LINE_M)
+        keeper_on_line = np.nan_to_num(on_goal_line, nan=False).any(axis=1)
+        in_that_area = (np.abs(px - goal_x[:, None]) <= PENALTY_DEPTH_M) & \
+                       (np.abs(py - width / 2) <= PENALTY_HALF_WIDTH_M)
+        area_count = np.nan_to_num(in_that_area, nan=False).sum(axis=1)
+        penalty_setup = settled & (d_spot <= PENALTY_SETUP_SPOT_M) & keeper_on_line & \
+            (area_count <= PENALTY_SETUP_MAX_IN_AREA)
+        player_y = players[..., 1]
+        player_beyond_side = np.isfinite(player_y) & ((player_y < 0) | (player_y > width))
+        thrower = (player_beyond_side & (to_ball <= THROW_IN_PLAYER_M)).any(axis=1)
+        near_sideline = np.fmin(by, width - by) <= THROW_IN_LINE_M
+
+    def closeness(distance, radius):
+        return np.where(settled, np.clip(1 - distance / radius, 0, 1), 0.0)
+
+    out = {"frame": np.asarray(tracking.frames),
+           "ball_out_m": np.clip(beyond, 0, 10),
+           "ball_still_s": np.minimum(still_s, BALL_STILL_CAP_S),
+           "ball_still_center": closeness(d_center, CENTER_RADIUS_M),
+           "ball_still_penalty_spot": closeness(d_spot, SPOT_RADIUS_M),
+           "ball_still_corner": closeness(d_corner, CORNER_RADIUS_M),
+           "ball_still_goal_area": (settled & in_goal_area).astype(float),
+           "ball_still_penalty_area": (settled & in_penalty & ~in_goal_area).astype(float),
+           "ball_still_open_field": (settled & in_pitch & ~in_penalty).astype(float),
+           "ball_still_with_holder": (settled & (nearest <= HOLDER_RADIUS_M)).astype(float),
+           "ball_still_free_space": (settled & (crowd <= 2)).astype(float),
+           "throw_in_setup": (seen & near_sideline & thrower).astype(float),
+           "penalty_setup": penalty_setup.astype(float)}
+    frame = pd.DataFrame(out)
+    columns = [c for c in frame.columns if c != "frame"]
+    for column in columns:  # palla assente = nessun indizio
+        frame[column] = np.where(seen & np.isfinite(frame[column]), frame[column], 0.0)
+    return frame
+
+
+def build_dead_features(tracking, *, fps=25, use_ball=True):
+    """Feature del classificatore del gioco fermo: giocatori, più la palla se `use_ball`."""
+    players = build_dead_ball_features(tracking, fps=fps)
+    if not use_ball:
+        return players
+    ball = ball_position_features(tracking, fps=fps).drop(columns="frame")
+    return pd.concat([players, ball], axis=1)
 
 
 def dead_ball_columns(features):

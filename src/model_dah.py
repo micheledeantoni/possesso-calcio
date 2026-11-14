@@ -2,9 +2,10 @@
 
 Estende `src/model.py`:
 - D vs gioco vivo: un secondo classificatore, addestrato su tutti i frame con le
-  feature di `src/dead_ball_features.py`, che non usano la palla (opzione
-  `dead_ball_uses_ball` per confronto). Nelle etichette Metrica D coincide con la
-  palla assente: con la palla il modello imparerebbe quella scorciatoia.
+  feature di `src/dead_ball_features.py`: giocatori, più dove e come sta la palla
+  quando si vede (`ball_position_features`, 0 quando manca). Nelle etichette Metrica
+  D coincide con la palla assente: con le feature di palla generiche (opzione
+  `dead_ball_uses_ball`, per confronto) il modello imparerebbe quella scorciatoia.
 - H vs A dato il gioco vivo: il classificatore di `src/model.py`.
 - Evidenza per frame (log-probabilità meno log-prior):
     D:  log P(D)                    − log prior(D)
@@ -28,7 +29,7 @@ import pandas as pd
 
 from src.arrays import load_metrica_npz
 from src.team_features import build_team_features, feature_columns, continuity
-from src.dead_ball_features import build_dead_ball_features, dead_ball_columns
+from src.dead_ball_features import build_dead_features, dead_ball_columns
 from src.model import CLASSIFIER_PARAMS, EPSILON, LABELS as HA, fit_classifier, log_evidence, evaluate, _breaks, _challenge
 
 STATES = np.array(["H", "A", "D"])
@@ -62,10 +63,11 @@ class DahModel:
     sklearn_version: str = ""
 
 
-def load_dah_games(folder, ball_speed_max_ms=40.0, primary=True, **feature_options):
+def load_dah_games(folder, ball_speed_max_ms=40.0, primary=True, ball_position=True, **feature_options):
     """Partite di una cartella. Il nome del file identifica la partita: versioni
     sporcate diverse della stessa partita (`primary=False`) hanno lo stesso nome e
-    finiscono sempre dalla stessa parte della validazione incrociata."""
+    finiscono sempre dalla stessa parte della validazione incrociata.
+    `ball_position=False`: gioco fermo con i soli giocatori (riferimento)."""
     games = []
     for path in sorted(Path(folder).glob("*.npz")):
         arrays = load_metrica_npz(path)
@@ -73,7 +75,7 @@ def load_dah_games(folder, ball_speed_max_ms=40.0, primary=True, **feature_optio
             raise ValueError(f"{path.name}: mancano le etichette")
         games.append(DahGame(path.stem, build_team_features(arrays, ball_speed_max_ms=ball_speed_max_ms,
                                                             **feature_options),
-                             build_dead_ball_features(arrays), np.asarray(arrays.labels),
+                             build_dead_features(arrays, use_ball=ball_position), np.asarray(arrays.labels),
                              continuity(arrays.frames, arrays.segment), primary))
     if not games:
         raise ValueError(f"Nessun file .npz in {folder}")
@@ -311,6 +313,8 @@ def main(argv=None):
     parser.add_argument("--objective", default="spellF1",
                         choices=["spellF1", "macroF1", "accuratezza_tutti", "D_f1", "cambi_f1", "accuratezza_HA"])
     parser.add_argument("--dead-ball-uses-ball", action="store_true")
+    parser.add_argument("--senza-posizione-palla", action="store_true",
+                        help="gioco fermo con i soli giocatori, senza ball_position_features (riferimento)")
     parser.add_argument("--extra", action="append", default=[],
                         help="cartella con altre versioni sporcate delle stesse partite (solo training)")
     parser.add_argument("--oriented", choices=["si", "no"], help="forza le feature orientate")
@@ -318,8 +322,11 @@ def main(argv=None):
     parser.add_argument("--output", default="outputs/model_dah_cv.json")
     args = parser.parse_args(argv)
     options = {k: v == "si" for k, v in (("oriented", args.oriented), ("context", args.context)) if v}
-    extra = [g for folder in args.extra for g in load_dah_games(folder, primary=False, **options)]
-    table = cross_validate(load_dah_games(args.metrica_dir, **options), objective=args.objective,
+    position = not args.senza_posizione_palla
+    extra = [g for folder in args.extra for g in load_dah_games(folder, primary=False, ball_position=position,
+                                                                **options)]
+    table = cross_validate(load_dah_games(args.metrica_dir, ball_position=position, **options),
+                           objective=args.objective,
                            uses_ball=args.dead_ball_uses_ball, extra=extra)
     pd.set_option("display.width", 250)
     print(table.round(4).to_string(index=False))
