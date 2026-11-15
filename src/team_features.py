@@ -14,6 +14,7 @@ I conteggi sono NaN quando manca la palla. `diff_*` = casa − ospiti.
 `mean_x` dipende dal verso di attacco, che cambia fra i tempi e fra le partite.
 """
 import math
+import os
 import warnings
 import numpy as np
 import pandas as pd
@@ -24,6 +25,18 @@ RADII_M = (2, 5, 10, 15)
 ORIENTED = True    # coordinate e direzioni orientate sul verso d'attacco (spellF1 +0,05 su Metrica)
 CONTEXT = True     # finestre di contesto sui segnali di possesso (+0,01, insieme alle altre leve)
 CONTEXT_WINDOWS = (12, 25, 50)  # frame: ±0,5 s, ±1 s, ±2 s
+# Feature di possesso aggiuntive (A5), a gruppi. Per gli esperimenti si sceglie quali
+# usare con la variabile d'ambiente POSSESSO_FEATURES, per esempio
+#   set POSSESSO_FEATURES=portieri,dietro      (Windows)
+# "nessuna" = nessun gruppo. Senza variabile valgono quelle qui sotto.
+EXTRA_GROUPS = ("portieri", "dietro", "packing", "linee", "corsie", "direzione")
+LEVEL_M = 1.0          # "in pari" con la palla: entro ±1 m di profondità
+LINE_M = 1.5           # "sulla stessa linea": compagni entro ±1,5 m di profondità
+LANES = 5              # corsie verticali: due fasce, due mezzi spazi, centro
+DIRECTION_WINDOW_S = 0.2   # direzione della palla dallo spostamento in 0,2 s (un frame trema troppo)
+DIRECTION_MIN_MS = 3.0     # sotto questa velocità la direzione è rumore: NaN
+RECEIVER_MAX_M = 40.0      # ricevitori possibili: davanti alla palla, entro 40 m lungo la traiettoria
+CONE_DEG = 15.0            # cono attorno alla direzione della palla
 
 
 def continuity(frames, segment):
@@ -63,7 +76,7 @@ def _displacement(ball, block, steps):
 
 
 def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_speed_max_ms=12.0, radii_m=RADII_M,
-                        oriented=None, context=None):
+                        oriented=None, context=None, extra=None):
     """Feature per frame da un `TrackingArrays`. Gli input non vengono modificati.
 
     ball_speed_max_ms: velocità oltre la quale lo spostamento della palla fra due
@@ -76,7 +89,9 @@ def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_spee
     lungo x, direzione e spostamenti della palla) con versioni orientate sul verso
     d'attacco, uguali nei due tempi e in tutte le partite (`orient_features`).
     context: aggiunge le finestre di contesto sul possesso (`add_context_features`).
-    None = valori predefiniti del modulo (ORIENTED, CONTEXT).
+    extra: gruppi di feature di possesso aggiuntive (`add_possession_extras`).
+    None = valori predefiniti del modulo (ORIENTED, CONTEXT, EXTRA_GROUPS o la
+    variabile d'ambiente POSSESSO_FEATURES).
     """
     if fps <= 0 or not math.isfinite(fps):
         raise ValueError("fps deve essere positivo")
@@ -179,6 +194,8 @@ def build_team_features(tracking, *, fps=25, ball_speed_max_ms=40.0, player_spee
                     + [f"players_{r}m" for r in radii_m] + [f"players_{r}m_pct" for r in radii_m]):
         out[f"diff_{feature}"] = out[f"home_{feature}"] - out[f"away_{feature}"]
     features = pd.DataFrame(out)
+    features = add_possession_extras(features, players, ball, team, block, tracking.pitch,
+                                     extra_groups(extra), fps)
     if ORIENTED if oriented is None else oriented:
         features = orient_features(features, ball, block, tracking.pitch)
     if CONTEXT if context is None else context:
@@ -196,13 +213,7 @@ def orient_features(features, ball, block, pitch):
     """
     f = features.copy()
     length, width = pitch if pitch is not None else (105.0, 68.0)
-    gap = (f["away_mean_x"] - f["home_mean_x"]).to_numpy()
-    orient = np.full(len(f), np.nan)
-    for b in np.unique(block):
-        part = block == b
-        values = gap[part][np.isfinite(gap[part])]
-        if len(values) and np.median(values) != 0:
-            orient[part] = np.sign(np.median(values))
+    orient = attack_orientation(f, block)
     for name in ("home", "away"):
         f[f"{name}_mean_x"] = (f[f"{name}_mean_x"] - length / 2) * orient
     f["diff_mean_x"] = f["home_mean_x"] - f["away_mean_x"]
@@ -211,6 +222,157 @@ def orient_features(features, ball, block, pitch):
     f["ball_direction"] = np.where(moving, np.arctan2(f["ball_dy"], f["ball_dx"]), np.nan)
     f["ball_x_oriented"] = (ball[:, 0] - length / 2) * orient
     f["ball_y_oriented"] = (ball[:, 1] - width / 2) * orient
+    return f
+
+
+def attack_orientation(features, block):
+    """Verso per tratto continuo: +1 se gli ospiti stanno a destra (la casa difende
+    la porta a x = 0), −1 al contrario, NaN se non si può dire. Usa i baricentri
+    *non* orientati (`home_mean_x`, `away_mean_x` come escono dal calcolo)."""
+    gap = (features["away_mean_x"] - features["home_mean_x"]).to_numpy()
+    orient = np.full(len(features), np.nan)
+    for b in np.unique(block):
+        part = block == b
+        values = gap[part][np.isfinite(gap[part])]
+        if len(values) and np.median(values) != 0:
+            orient[part] = np.sign(np.median(values))
+    return orient
+
+
+def extra_groups(extra=None):
+    """Gruppi A5 da calcolare: `extra` se dato, altrimenti POSSESSO_FEATURES, altrimenti EXTRA_GROUPS."""
+    if extra is None:
+        text = os.environ.get("POSSESSO_FEATURES")
+        if text is None:
+            return tuple(EXTRA_GROUPS)
+        extra = [] if text.strip().lower() in ("", "nessuna") else [g.strip().lower() for g in text.split(",")]
+    unknown = set(extra) - set(EXTRA_GROUPS)
+    if unknown:
+        raise ValueError(f"Gruppi di feature sconosciuti: {sorted(unknown)}; ammessi: {EXTRA_GROUPS}")
+    return tuple(extra)
+
+
+def add_possession_extras(features, players, ball, team, block, pitch, groups, fps=25):
+    """Feature di possesso "da allenatore" (lavoro A5), a gruppi.
+
+    Tutte usano la *propria porta* di ogni squadra, ricavata dal verso di
+    `attack_orientation`: significano la stessa cosa nei due tempi. Le profondità
+    sono metri dalla propria linea di porta (0 = sulla linea, cresce verso l'avversario).
+
+    - portieri: altezza del giocatore più arretrato di ogni squadra (quasi sempre il
+      portiere). Chi attacca alza il portiere. Non usa la palla.
+    - dietro: giocatori di ogni squadra dietro la palla (fra palla e propria porta),
+      in pari (±1 m) e davanti. Chi difende scherma: tanti dietro. NaN senza palla.
+    - packing: come cambia, nel secondo prima e in quello dopo, il numero di
+      giocatori dietro la palla. Se la palla supera gli avversari, i loro "dietro"
+      calano: chi li fa calare ha il possesso. NaN senza palla.
+    - linee: quanti compagni ha in media ogni giocatore sulla sua stessa linea
+      (±1,5 m di profondità). Chi difende si dispone in linee piatte; chi costruisce
+      si sfalsa. Vale soprattutto in costruzione: il contesto (posizione e velocità
+      della palla) lo danno le altre feature. Non usa la palla.
+    - corsie: quante delle 5 corsie verticali occupa ogni squadra. Chi attacca
+      allarga e le occupa tutte. Non usa la palla.
+    - direzione: verso chi va la palla. Per ogni squadra, quanto è vicino alla
+      traiettoria il suo giocatore meglio piazzato per riceverla (davanti alla
+      palla, entro 40 m), e quanti giocatori stanno in un cono di ±15° attorno alla
+      direzione. NaN se la palla non si vede o va sotto 3 m/s.
+    """
+    f = features.copy()
+    if not groups:
+        return f
+    length, width = pitch if pitch is not None else (105.0, 68.0)
+    orient = attack_orientation(f, block)
+    players = np.asarray(players, dtype=float)
+    x, y = players[..., 0], players[..., 1]
+    present = np.isfinite(players).all(axis=2)
+    team = np.asarray(team)
+    ball = np.asarray(ball, dtype=float)
+    ball_seen = np.isfinite(ball).all(axis=1)
+    # Casa: porta a x = 0 se orient = +1, a x = length se orient = −1. Ospiti al contrario.
+    home_goal = np.where(orient > 0, 0.0, np.where(orient < 0, length, np.nan))
+    goals = {"home": home_goal, "away": length - home_goal}
+    known = np.isfinite(home_goal)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # righe interamente NaN
+        for name, code in TEAMS:
+            mine = present & (team == code)
+            goal = goals[name]
+            depth = np.where(mine, np.abs(x - goal[:, None]), np.nan)  # giocatore → propria porta
+            ball_depth = np.abs(ball[:, 0] - goal)                       # palla → stessa porta
+            if "portieri" in groups:
+                f[f"{name}_keeper_depth"] = np.nanmin(depth, axis=1)
+            if "dietro" in groups or "packing" in groups:
+                gap = depth - ball_depth[:, None]  # < 0: fra la palla e la propria porta
+                ok = ball_seen & known
+                behind = np.where(ok, (mine & (gap < -LEVEL_M)).sum(axis=1), np.nan)
+                f[f"{name}_behind_ball"] = behind
+                if "dietro" in groups:
+                    f[f"{name}_level_ball"] = np.where(ok, (mine & (np.abs(gap) <= LEVEL_M)).sum(axis=1), np.nan)
+                    f[f"{name}_ahead_ball"] = np.where(ok, (mine & (gap > LEVEL_M)).sum(axis=1), np.nan)
+            if "linee" in groups:
+                mates = np.zeros(depth.shape)
+                for a in range(0, len(depth), 5000):  # a blocchi: tutte le coppie occupano memoria
+                    d = depth[a:a + 5000]
+                    dx = np.abs(d[:, :, None] - d[:, None, :])          # tutte le coppie di compagni
+                    mates[a:a + 5000] = (dx <= LINE_M).sum(axis=2) - 1  # NaN → False; meno se stesso
+                f[f"{name}_line_mates"] = np.where(mine.any(axis=1), _masked_mean(mates, mine), np.nan)
+            if "corsie" in groups:
+                lane = np.clip(np.floor(y / width * LANES), 0, LANES - 1)
+                occupied = np.zeros(len(f))
+                for k in range(LANES):
+                    occupied += (mine & (lane == k)).any(axis=1)
+                f[f"{name}_lanes"] = np.where(mine.any(axis=1), occupied, np.nan)
+
+    if "direzione" in groups:
+        f = _direction_features(f, players, present, team, ball, block, fps)
+
+    if "packing" in groups:
+        from src.dead_ball_features import window_mean
+        continuous = np.r_[False, block[1:] == block[:-1]]
+        second = int(round(fps))
+        for name in ("home", "away"):
+            values = f[f"{name}_behind_ball"].to_numpy(dtype=float)
+            past = window_mean(values, continuous, second, 0)
+            future = window_mean(values, continuous, 0, second)
+            trend = future - past
+            f[f"{name}_behind_ball_trend_1s"] = np.where(np.isfinite(values), trend, np.nan)
+        if "dietro" not in groups:
+            f = f.drop(columns=["home_behind_ball", "away_behind_ball"])
+    for column in ("keeper_depth", "behind_ball", "level_ball", "ahead_ball", "behind_ball_trend_1s",
+                   "line_mates", "lanes", "receiver_dist", "in_cone"):
+        if f"home_{column}" in f and f"away_{column}" in f:
+            f[f"diff_{column}"] = f[f"home_{column}"] - f[f"away_{column}"]
+    return f
+
+
+def _direction_features(f, players, present, team, ball, block, fps):
+    """Gruppo "direzione": verso chi va la palla (vedi `add_possession_extras`)."""
+    n = len(ball)
+    steps = max(1, int(round(DIRECTION_WINDOW_S * fps)))
+    # 1. Velocità della palla dallo spostamento in `steps` frame, solo se la palla si
+    #    vede all'inizio e alla fine e il tratto è continuo.
+    velocity = np.full((n, 2), np.nan)
+    if n > steps:
+        same_block = block[steps:] == block[:-steps]
+        velocity[steps:] = np.where(same_block[:, None], (ball[steps:] - ball[:-steps]) * fps / steps, np.nan)
+    speed = np.hypot(velocity[:, 0], velocity[:, 1])
+    moving = np.isfinite(speed) & (speed >= DIRECTION_MIN_MS)
+    unit = velocity / np.where(moving, speed, np.nan)[:, None]  # direzione, lunga 1
+    # 2. Per ogni giocatore: quanto è avanti lungo la traiettoria (prodotto scalare)
+    #    e quanto è lontano di lato (prodotto vettoriale), tutti i frame insieme.
+    rel = players - ball[:, None, :]
+    along = rel[..., 0] * unit[:, None, 0] + rel[..., 1] * unit[:, None, 1]
+    side = np.abs(rel[..., 0] * unit[:, None, 1] - rel[..., 1] * unit[:, None, 0])
+    ahead = present & (along > 0) & (along <= RECEIVER_MAX_M)
+    in_cone = ahead & (np.degrees(np.arctan2(side, along)) <= CONE_DEG)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for name, code in TEAMS:
+            mine = team == code
+            best = np.nanmin(np.where(ahead & mine, side, np.nan), axis=1)
+            # Nessun compagno davanti: il ricevitore è "lontanissimo", non sconosciuto.
+            f[f"{name}_receiver_dist"] = np.where(moving, np.where(np.isfinite(best), best, RECEIVER_MAX_M), np.nan)
+            f[f"{name}_in_cone"] = np.where(moving, (in_cone & mine).sum(axis=1), np.nan)
     return f
 
 
