@@ -74,21 +74,21 @@ def model_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, objecti
 def model_dah_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, objective="spellF1", extra_dirs=()):
     """Modello a tre stati H/A/D (`src/model_dah.py`), addestrato sui soli npz Metrica.
 
-    Il gioco fermo è stimato da feature che non usano la palla
+    Il gioco fermo è stimato dai giocatori e dalla posizione della palla quando si vede
     (`src/dead_ball_features.py`), calcolate sugli stessi array delle feature per squadra.
     `extra_dirs`: cartelle con altre versioni sporcate delle stesse partite
     (`python -m src.dirtying` con semi diversi), usate solo come dati di training in più.
     Restituisce (etichette frame,label; probabilità p_H, p_A, p_D; registro).
     """
     from src.model_dah import load_dah_games, fit_dah_model, predict_dah
-    from src.dead_ball_features import build_dead_ball_features
+    from src.dead_ball_features import build_dead_features
     from src.team_features import continuity
     if team_features is None:
         raise ValueError("possession_method='model_dah' richiede team_features=True")
     games = load_dah_games(metrica_dir, ball_speed_max_ms=ball_speed_max_ms)
     extra = [g for folder in extra_dirs for g in load_dah_games(folder, ball_speed_max_ms=ball_speed_max_ms, primary=False)]
     model = fit_dah_model(games + extra, objective=objective)
-    result = predict_dah(model, team_features, build_dead_ball_features(arrays),
+    result = predict_dah(model, team_features, build_dead_features(arrays),
                          continuity(arrays.frames, arrays.segment), probabilities=True)
     labels = result.label.to_numpy()
     log = {"partite_training": [g.name for g in games], "versioni_sporcate_in_piu": len(extra), "obiettivo": objective,
