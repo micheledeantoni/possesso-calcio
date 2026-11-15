@@ -1,0 +1,35 @@
+# Audit e merge di A1, A5 e del commit fb717dc (15 novembre 2026)
+# Comando: python -m src.model_dah data/metrica --extra data/metrica_extra_1 --extra data/metrica_extra_2
+# Dati: Train set del gruppo + due sporcature in più; valutazione annidata leave-one-game-out; obiettivo spellF1;
+# sklearn della .venv, random_state 42 (risultati deterministici: A3 e A1 riprodotti esattamente).
+# Solo partite Metrica: nessun numero calcolato sulla partita della challenge.
+#
+# Versioni
+#   A3      68ac26c  regolarizzazione dei classificatori (riferimento)
+#   Cesare  fb717dc  secondo classificatore D con palla, P(D) = 0,34·con_palla + 0,66·senza; limite 30% di falsi D
+#   A1      bac5828  feature della palla per il gioco fermo (src/dead_ball_features.py)
+#   A5      512efdc  6 gruppi di feature di possesso (src/team_features.py)
+#
+# falsiD = quota dei frame a gioco vivo con palla assente predetti D (più basso è meglio)
+
+versione                   spellF1  per partita              macroF1  falsiD  per partita
+A3                         0.6160   0.637 / 0.611 / 0.601    0.8629   0.200   0.342 / 0.212 / 0.046
+A3 + Cesare                0.6512   0.650 / 0.662 / 0.641    0.8885   0.251   0.382 / 0.307 / 0.063
+A3 + A1                    0.6507   0.662 / 0.648 / 0.642    0.9003   0.215   0.308 / 0.289 / 0.048
+A3 + A1 + A5 (no Cesare)   0.6790   0.687 / 0.678 / 0.672    0.9056   0.218   0.319 / 0.289 / 0.046
+A3 + Cesare + A1 + A5      0.7131   0.722 / 0.732 / 0.685    0.9289   0.248   0.373 / 0.289 / 0.082   <- main
+
+# Note dell'audit
+# - A1: le feature "palla ferma" quasi non si attivano a gioco fermo su Metrica (la palla si vede nello 0,1-0,2%
+#   dei frame D), quindi il modello le impara dal gioco vivo. Il guadagno viene da ball_out_memory_s e
+#   ball_restart_ahead. Valgono 0 a palla assente: nessuna scorciatoia diretta.
+# - A5: il 0,651 -> 0,680 del commit è misurato sopra A1. Usa più memoria: sei valutazioni in parallelo su 15 GB
+#   esauriscono la RAM; la run di consegna sulla partita intera passa (minimo 0,3 GB liberi con il main).
+# - Cesare: il classificatore con palla impara anche "palla assente => D" (D coincide con la palla assente nelle
+#   etichette Metrica). Il guadagno su Metrica (+0,034 sopra A1 + A5) arriva con circa 3 punti di falsi D in più;
+#   il limite del 30% è applicato sulle partite di validazione insieme, non su ciascuna. Tenuto nel main
+#   dopo un confronto locale delle due consegne; `--peso-palla 0` permette di rifare il confronto.
+# - Pulizia successiva (lavoro/main-solido): w e il limite diventano DEAD_BALL_WEIGHT e MAX_FALSE_D,
+#   --dead-ball-uses-ball (non faceva più nulla) è sostituito da --peso-palla e --max-falsi-d, il registro
+#   della run riporta il peso, nessun limite rispettato => warning e combinazione con meno falsi D invece di
+#   un errore. Comportamento predefinito invariato.

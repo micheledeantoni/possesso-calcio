@@ -36,6 +36,9 @@ def main(argv=None):
         changes.update({"start_frame": 0, "end_frame": None, "save_outputs": True, "show_plots": False})
     if args.source:
         changes["source"] = args.source
+    if args.source == "synthetic" and not args.full:
+        # L'intervallo predefinito di CONFIG è sulla partita vera: la demo dura solo `synthetic_duration_s`.
+        changes.update({"start_frame": 0, "end_frame": None})
     if args.run_name:
         changes["run_name"] = args.run_name
     for item in args.set:

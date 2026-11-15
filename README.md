@@ -4,7 +4,7 @@ Una pipeline esplorativa per stimare la squadra in possesso a partire dal tracki
 
 **Un notebook, tre moduli su cui lavorare:** palla mancante, tracce dei giocatori, caratteristiche e regole di possesso. Ogni trasformazione conserva gli input originali e registra cosa modifica.
 
-> Stato attuale: due metodi selezionabili. La baseline geometrica sceglie la squadra più vicina alla palla oppure si astiene; il modello (classificatore + Viterbi) è addestrato soltanto sulle partite Metrica e assegna H/A a ogni frame. Non riconosce ancora il gioco fermo né il controllo effettivo della palla. Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
+> Stato attuale (15 novembre 2026): tre metodi selezionabili. La baseline geometrica sceglie la squadra più vicina alla palla oppure si astiene; `model` (classificatore + Viterbi) assegna H/A a ogni frame; `model_dah`, il predefinito per la consegna, aggiunge il gioco fermo D. I modelli sono addestrati soltanto sulle partite Metrica: su Metrica `model_dah` fa 0,713 di spellF1 (§4H), che **non è una previsione dello score**. Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
 
 ## 1. Avvio
 
@@ -60,7 +60,7 @@ Non occorre modificare le celle delle tappe per cambiare intervallo o attivare u
 python -m src.run_notebook --full --run-name consegna
 ```
 
-Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2` (vedi `data/README.md`). Sulla partita intera richiede decine di minuti: la maggior parte è l'addestramento su Metrica.
+Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2` (vedi `data/README.md`). Sulla partita intera richiede circa 10 minuti, quasi tutti di addestramento su Metrica, e quasi tutta la RAM di un computer da 16 GB (0,3 GB liberi al minimo): chiudere gli altri programmi prima di lanciarla.
 
 ## 3. CONFIG: i comandi della run
 
@@ -183,6 +183,16 @@ Due opzioni sono attive di default perché migliorano lo spellF1 su Metrica (`do
 - **feature orientate** (`ORIENTED`): baricentri lungo x, spostamenti e direzione della palla sono riferiti al verso d'attacco, ricavato in ogni tempo dalla posizione delle due squadre. In più ci sono `ball_x_oriented` e `ball_y_oriented`, dove x positivo vuol dire verso la porta degli ospiti. Così le feature hanno lo stesso significato nei due tempi e in tutte le partite;
 - **feature di contesto** (`CONTEXT`, colonne `ctx_*`): quota di frame in cui la casa ha il giocatore più vicino alla palla, medie della differenza di distanza e dei giocatori entro 5 m su ±0,5, ±1 e ±2 s, la stessa quota nel secondo prima e in quello dopo, e da quanti secondi la stessa squadra ha il giocatore più vicino. Le finestre non escono dal tempo in corso.
 
+Sei gruppi di **feature di possesso** (lavoro A5, `add_possession_extras`), tutti riferiti alla propria porta di ogni squadra:
+- `portieri`: profondità del giocatore più arretrato;
+- `dietro`: giocatori dietro la palla, in pari e davanti;
+- `packing`: come cambia, nel secondo prima e in quello dopo, il numero di giocatori dietro la palla;
+- `linee`: compagni sulla stessa linea di profondità;
+- `corsie`: corsie verticali occupate, su 5;
+- `direzione`: quanto è vicino alla traiettoria della palla il miglior ricevitore di ogni squadra, e quanti giocatori stanno nel cono di ±15°.
+
+Sono attivi tutti per default. Per gli esperimenti la variabile d'ambiente `POSSESSO_FEATURES` sceglie quali usare, per esempio `portieri,dietro` oppure `nessuna`. Il registro della run (`gruppi_feature_possesso` in `run.json`) dice quali erano attivi: controllarlo, perché una variabile rimasta impostata cambia il modello senza avvisare.
+
 `cleaning.py` riprende la pulizia del gruppo (script "Pulizia dati giocatori e palla"), con le stesse soglie fissate a priori. Per i giocatori: tracce spezzate oltre 12 m/s; cambio di squadra di una traccia solo se riduce gli oggetti oltre 11; nei frame con più di 11 oggetti, doppioni a meno di 1 m uniti e oggetti oltre 1 m fuori dal campo tolti, mai il più vicino alla palla. Per la palla: via i punti impossibili oltre 40 m/s; buchi fino a 1 s interpolati solo se fisicamente possibili. Differenze dall'originale: campo e soglie sono parametri (Metrica 105 m, BAR-ATH 105,3 m); i doppioni non vengono mediati, resta il punto della traccia più lunga, così la velocità non ha salti artificiali; tracce e interpolazione non attraversano i confini dei tempi. Sui tre match Metrica i risultati coincidono con l'originale, tranne i frame con doppioni (`docs/audit_drive/scripts/verify_cleaning.py`).
 
 Nel notebook, con `clean_tracking=True`, le feature usano giocatori e palla puliti: le tappe 3 e 4 non vi entrano. Senza pulizia la palla è quella della tappa 3 (`ball_used_xy`) e le tracce restano originali, perché il filtro della tappa 4 lavora su liste senza slot. `ball_source` indica sempre le posizioni stimate. Le feature escludono le velocità oltre 12 m/s (`player_speed_max_ms`): uno slot che cambia persona. Le tracce vengono rilette dal file: su tutta la registrazione la tappa richiede qualche secondo in più.
@@ -243,22 +253,34 @@ python -m src.dirtying "<cartella npz Metrica puliti>" data/metrica --periods-fr
 
 `--periods-from` prende il periodo di gioco dai file del gruppo: i dati puliti non lo contengono.
 
-### G. Modello a tre stati H/A/D (gioco fermo senza palla)
+### G. Modello a tre stati H/A/D (gioco fermo)
 
 File: `src/dead_ball_features.py` e `src/model_dah.py`; tappa 7 del notebook con `possession_method="model_dah"`.
 
-Nelle etichette Metrica D coincide con la palla assente, perché le etichette sono costruite dai buchi della palla. Nella challenge questo non è garantito: la palla sparisce anche a gioco vivo. Il modello a tre stati riconosce quindi il gioco fermo **senza usare la palla**, con un secondo classificatore che guarda solo i giocatori:
+Nelle etichette Metrica D coincide con la palla assente, perché le etichette sono costruite dai buchi della palla. Nella challenge questo non è garantito: la palla sparisce anche a gioco vivo. Il gioco fermo viene quindi da due classificatori.
+
+Il **classificatore senza palla generica** guarda i giocatori e, quando si vede, la palla:
 - movimento collettivo: velocità media e mediana, quota di giocatori lenti e veloci, andamento prima e dopo il frame;
 - schieramenti delle riprese: calcio d'inizio, rimessa, angolo, rinvio, rigore, barriere ed esultanze;
-- assetto delle squadre.
+- assetto delle squadre;
+- posizione della palla (lavoro A1, `ball_position_features`): fuori dalle linee, ferma, ferma su un punto di ripresa, e i bordi delle pause, cioè palla vista uscire e non ancora rientrata, oppure palla che dopo un buco ricompare su un punto di ripresa. A palla assente queste feature valgono 0: l'assenza della palla non è un indizio.
+
+Il **classificatore con palla** usa le stesse feature più tutte quelle per squadra, compresa la disponibilità della palla. Su Metrica impara quindi anche la scorciatoia "palla assente ⇒ D".
+
+I due si combinano con P(D) = w · P(con palla) + (1 − w) · P(senza palla), dove w = 0,34 (`DEAD_BALL_WEIGHT`) è fissato a mano, non scelto in validazione. Per frenare la scorciatoia, nella scelta dei parametri sono escluse le combinazioni che dicono D in più del 30% (`MAX_FALSE_D`) dei frame a gioco vivo con palla assente delle partite di validazione. Se nessuna rispetta il limite, la run non si ferma: un warning segnala la scelta della combinazione con meno falsi D.
 
 Il possesso viene dal classificatore H/A del §4E. Le due evidenze si combinano così:
 - D: log P(D) − log prior(D);
 - H e A: log(1 − P(D)) + log P(H|non D) − log prior(H), e allo stesso modo per A.
 
-Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica, con obiettivo predefinito lo spellF1, la metrica di classifica (§4H). Per confronto, `python -m src.model_dah data/metrica --dead-ball-uses-ball` lascia usare anche la palla al classificatore del gioco fermo.
+Viterbi a tre stati sceglie la sequenza di etichette, con transizioni stimate dalle etichette Metrica; forward-backward dà le probabilità di ogni frame, salvate in `probabilities.csv`. Temperatura e scala delle transizioni sono scelte in leave-one-game-out sulle sole partite Metrica, con obiettivo predefinito lo spellF1, la metrica di classifica (§4H).
 
-Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altre due partite; tutti i frame; obiettivo accuratezza e griglia precedenti, prima dello spellF1: i numeri con lo spellF1 sono nel §4H):
+Per confronto:
+- `python -m src.model_dah data/metrica --peso-palla 0` usa solo il classificatore senza palla;
+- `--max-falsi-d 1` toglie il limite sui falsi D;
+- `--senza-posizione-palla` toglie le feature di palla di A1.
+
+La tabella seguente è **storica**: è la prima versione, con un solo classificatore D, valutata con obiettivo accuratezza prima dello spellF1. I numeri attuali sono nel §4H e in `docs/audit_drive/merge_a1_a5.txt`.
 
 | Partita di test | Accuratezza H/A/D, D senza palla | F1 di D | Falsi D nei buchi a gioco vivo | Accuratezza H/A/D, D con palla | Falsi D, con palla |
 |---|---|---|---|---|---|
@@ -288,6 +310,17 @@ Sui tre match Metrica sporcati (valutazione annidata; baseline ufficiale con fin
 | `model_dah`, D senza palla, macroF1, prima delle leve | 0,819 | 0,856 | 0,863 |
 | **`model_dah`, D senza palla, macroF1, con le leve** | **0,834** | **0,868** | **0,881** |
 | `model_dah`, D con palla, macroF1, prima delle leve | 0,920 | 0,926 | 0,919 |
+
+Il lavoro successivo, con la stessa valutazione, le leve e due sporcature in più (`docs/audit_drive/a3_regolarizzazione.txt` e `merge_a1_a5.txt`):
+
+| `model_dah`, spellF1 | Partita 1 | Partita 2 | Partita 3 | Media | Falsi D nei buchi a gioco vivo |
+|---|---|---|---|---|---|
+| A3: classificatori regolarizzati | 0,637 | 0,611 | 0,601 | 0,616 | 20,0% |
+| + A1: posizione della palla per D | 0,662 | 0,648 | 0,642 | 0,651 | 21,5% |
+| + A5: feature di possesso | 0,687 | 0,678 | 0,672 | 0,679 | 21,8% |
+| **+ classificatore D con palla, w = 0,34 (predefinito)** | **0,722** | **0,732** | **0,685** | **0,713** | 24,8% |
+
+macroF1 del predefinito: 0,915, 0,938, 0,934. L'ultimo passo guadagna su Metrica, ma in parte con la scorciatoia "palla assente ⇒ D", come mostrano i falsi D in più. Per rifare il confronto senza: `--peso-palla 0`.
 
 Le leve di stabilità sono tre: feature orientate, feature di contesto (§4D) e due versioni sporcate in più per partita nel training. L'effetto di ciascuna, misurata da sola:
 - feature orientate: +0,051 di spellF1 medio;

@@ -3,7 +3,7 @@ from dataclasses import replace
 import numpy as np
 from src.checks import check_tracking, check_predictions
 from src.runs import save_run
-from src.team_features import build_team_features, feature_columns
+from src.team_features import build_team_features, feature_columns, extra_groups
 
 
 def audit_run(tracking, expected_rows, start_frame):
@@ -39,7 +39,7 @@ def team_features_for_run(arrays, tracking, ball_speed_max_ms, ball_interpolated
     columns = [c for c in feature_columns(features) if c != "ball_source"]
     log = {"frame": len(features), "tracce_negli_array": int(arrays.players.shape[1]),
            "feature": len(columns), "segmenti": sorted(int(s) for s in np.unique(arrays.segment)),
-           "ball_speed_max_ms": ball_speed_max_ms,
+           "ball_speed_max_ms": ball_speed_max_ms, "gruppi_feature_possesso": list(extra_groups()),
            "anomalie_velocita_palla": int(features.ball_tracking_anomaly.sum()),
            "frame_con_palla_stimata": int(features.ball_source.isin(["linear", "velocity"]).sum()),
            "giocatori_e_palla": ("puliti (src/cleaning.py)" if ball_interpolated is not None
@@ -94,7 +94,8 @@ def model_dah_for_run(arrays, team_features, metrica_dir, ball_speed_max_ms, obj
     log = {"partite_training": [g.name for g in games], "versioni_sporcate_in_piu": len(extra), "obiettivo": objective,
            **{f"viterbi_{k}": v for k, v in model.params.items()},
            "feature_HA": len(model.ha_columns), "feature_gioco_fermo": len(model.dead_columns),
-           "gioco_fermo_usa_palla": model.dead_ball_uses_ball, "scikit_learn": model.sklearn_version,
+           "gioco_fermo_usa_palla": model.dead_ball_uses_ball, "peso_classificatore_D_con_palla": model.dead_ball_weight,
+           "scikit_learn": model.sklearn_version,
            "cambi_etichetta": int((labels[1:] != labels[:-1]).sum()),
            "etichette": result.label.value_counts().to_dict()}
     return result[["frame", "label"]], result[["frame", "p_H", "p_A", "p_D"]], log
