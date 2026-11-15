@@ -229,6 +229,132 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class KeeperFeatureTests(unittest.TestCase):
+    def match(self, flip=False, ball=True):
+        """Casa a sinistra (portiere a 3 m dalla sua porta), ospiti a destra con il
+        portiere alto, a 25 m dalla sua porta. `flip`: secondo tempo, campo ruotato."""
+        n = 10
+        home = [(3., 34.), (30., 20.), (35., 50.)]
+        away = [(80., 34.), (60., 20.), (65., 50.)]
+        players = np.tile(np.array(home + away, dtype=float), (n, 1, 1))
+        b = np.tile([50., 34.], (n, 1)) if ball else np.full((n, 2), np.nan)
+        if flip:
+            players[..., 0], players[..., 1] = 105. - players[..., 0], 68. - players[..., 1]
+            b = np.column_stack([105. - b[:, 0], 68. - b[:, 1]])
+        team = np.tile(np.array([0, 0, 0, 1, 1, 1], dtype=np.int8), (n, 1))
+        return TrackingArrays(np.arange(n), players, b, team, np.ones(n, dtype=int), pitch=(105., 68.))
+
+    def test_keeper_depth_from_own_goal(self):
+        f = build_team_features(self.match())
+        self.assertAlmostEqual(f.home_keeper_depth[0], 3.)
+        self.assertAlmostEqual(f.away_keeper_depth[0], 25.)
+        self.assertAlmostEqual(f.diff_keeper_depth[0], -22.)
+
+    def test_same_meaning_in_both_halves(self):
+        a, b = build_team_features(self.match()), build_team_features(self.match(flip=True))
+        for column in ("home_keeper_depth", "away_keeper_depth", "diff_keeper_depth"):
+            np.testing.assert_allclose(a[column], b[column])
+
+    def test_does_not_need_the_ball(self):
+        f = build_team_features(self.match(ball=False))
+        self.assertAlmostEqual(f.away_keeper_depth[0], 25.)
+
+
+class PossessionExtrasTests(unittest.TestCase):
+    """Casa a sinistra (porta a x = 0), ospiti a destra (porta a x = 105)."""
+    def match(self, n=60, ball=(50., 34.), flip=False):
+        home = [(3., 34.), (20., 10.), (20., 30.), (20., 50.), (40., 60.), (55., 34.)]   # linea a 20 m
+        away = [(100., 34.), (70., 15.), (70., 30.), (70., 45.), (70., 60.), (45., 34.)]  # linea a 35 m
+        players = np.tile(np.array(home + away, dtype=float), (n, 1, 1))
+        b = np.tile(np.asarray(ball, dtype=float), (n, 1))
+        if flip:
+            players[..., 0], players[..., 1] = 105. - players[..., 0], 68. - players[..., 1]
+            b = np.column_stack([105. - b[:, 0], 68. - b[:, 1]])
+        team = np.tile(np.array([0] * 6 + [1] * 6, dtype=np.int8), (n, 1))
+        return TrackingArrays(np.arange(n), players, b, team, np.ones(n, dtype=int), pitch=(105., 68.))
+
+    def test_behind_level_ahead(self):
+        f = build_team_features(self.match(), extra=["dietro"])
+        # palla a x = 50: casa dietro = 3, 20, 20, 20, 40 → 5; davanti 55 → 1
+        self.assertEqual(f.home_behind_ball[0], 5)
+        self.assertEqual(f.home_ahead_ball[0], 1)
+        # ospiti dietro (fra palla e x = 105): 100 e i quattro a 70 → 5; davanti: 45 → 1
+        self.assertEqual(f.away_behind_ball[0], 5)
+        self.assertEqual(f.away_ahead_ball[0], 1)
+        f = build_team_features(self.match(ball=(55., 34.)), extra=["dietro"])
+        self.assertEqual(f.home_level_ball[0], 1)  # il giocatore a 55 è in pari
+
+    def test_missing_ball_is_nan(self):
+        f = build_team_features(self.match(ball=(np.nan, np.nan)), extra=["dietro", "packing", "portieri"])
+        self.assertTrue(f.home_behind_ball.isna().all())
+        self.assertTrue(f.diff_behind_ball_trend_1s.isna().all())
+        self.assertFalse(f.home_keeper_depth.isna().any())  # i portieri non usano la palla
+
+    def test_packing_trend_when_ball_passes_the_opponents(self):
+        data = self.match(n=100)
+        data.ball[:] = np.column_stack([50. + .3 * np.arange(100), np.full(100, 34.)])  # la casa avanza: 50 → 80 m
+        f = build_team_features(data, extra=["packing"])
+        self.assertLess(f.away_behind_ball_trend_1s[50], 0)   # gli ospiti superati calano
+        self.assertNotIn("home_behind_ball", f)               # senza "dietro" restano solo i trend
+
+    def test_lines_and_lanes(self):
+        f = build_team_features(self.match(), extra=["linee", "corsie"])
+        # ospiti: quattro sulla linea a 70 (3 compagni ciascuno), due da soli → (4·3 + 0 + 0) / 6 = 2
+        self.assertAlmostEqual(f.away_line_mates[0], 2.)
+        self.assertAlmostEqual(f.home_line_mates[0], 1.)  # casa: tre a 20 m (2 compagni ciascuno) → 3·2 / 6 = 1
+        self.assertGreater(f.diff_line_mates[0], -1.5)
+        self.assertLess(f.diff_line_mates[0], 0)            # gli ospiti sono più "in linea"
+        self.assertEqual(f.away_lanes[0], 4)
+
+    def test_same_meaning_in_both_halves(self):
+        groups = ["portieri", "dietro", "packing", "linee", "corsie"]
+        a = build_team_features(self.match(), extra=groups)
+        b = build_team_features(self.match(flip=True), extra=groups)
+        for column in [c for c in a.columns if c.endswith(("keeper_depth", "behind_ball", "level_ball", "ahead_ball",
+                                                            "trend_1s", "line_mates", "lanes"))]:
+            np.testing.assert_allclose(a[column], b[column], err_msg=column)
+
+    def pass_to_teammate(self, flip=False):
+        """La palla parte da x = 40 e va dritta (10 m/s) verso un compagno di casa a x = 60;
+        un ospite sta di lato, a 11 m dalla traiettoria."""
+        n = 50
+        players = np.tile(np.array([(3., 34.), (60., 34.), (100., 34.), (55., 45.)]), (n, 1, 1))
+        ball = np.column_stack([40. + .4 * np.arange(n), np.full(n, 34.)])
+        if flip:
+            players[..., 0], players[..., 1] = 105. - players[..., 0], 68. - players[..., 1]
+            ball = np.column_stack([105. - ball[:, 0], 68. - ball[:, 1]])
+        team = np.tile(np.array([0, 0, 1, 1], dtype=np.int8), (n, 1))
+        return TrackingArrays(np.arange(n), players, ball, team, np.ones(n, dtype=int), pitch=(105., 68.))
+
+    def test_ball_goes_straight_to_a_teammate(self):
+        f = build_team_features(self.pass_to_teammate(), extra=["direzione"])
+        self.assertTrue(math.isnan(f.home_receiver_dist[0]))     # primi frame: direzione non ancora nota
+        self.assertAlmostEqual(f.home_receiver_dist[10], 0.)     # il compagno è sulla traiettoria
+        self.assertAlmostEqual(f.away_receiver_dist[10], 11.)    # l'ospite è di lato
+        self.assertLess(f.diff_receiver_dist[10], 0)             # la palla va verso la casa
+        self.assertEqual(f.home_in_cone[10], 1)
+        self.assertEqual(f.away_in_cone[10], 0)                  # 11 m di lato a 7 m: fuori dal cono
+
+    def test_direction_same_in_both_halves(self):
+        a = build_team_features(self.pass_to_teammate(), extra=["direzione"])
+        b = build_team_features(self.pass_to_teammate(flip=True), extra=["direzione"])
+        for column in ("home_receiver_dist", "away_receiver_dist", "diff_receiver_dist", "home_in_cone"):
+            np.testing.assert_allclose(a[column], b[column], err_msg=column)
+
+    def test_direction_is_nan_when_ball_still_or_missing(self):
+        data = self.pass_to_teammate()
+        data.ball[:] = (40., 34.)  # ferma
+        self.assertTrue(build_team_features(data, extra=["direzione"]).home_receiver_dist.isna().all())
+        data.ball[:] = np.nan
+        self.assertTrue(build_team_features(data, extra=["direzione"]).home_in_cone.isna().all())
+
+    def test_groups_can_be_switched_off(self):
+        f = build_team_features(self.match(), extra=[])
+        self.assertNotIn("home_keeper_depth", f)
+        with self.assertRaises(ValueError):
+            build_team_features(self.match(), extra=["sconosciuta"])
+
+
 class OrientedAndContextTests(unittest.TestCase):
     def test_oriented_features_do_not_depend_on_field_side(self):
         data = tracking(n=8, ball=np.column_stack([1. + np.arange(8) * .3, np.zeros(8)]))
