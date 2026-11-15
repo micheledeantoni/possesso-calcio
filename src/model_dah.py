@@ -45,6 +45,10 @@ from src.model import CLASSIFIER_PARAMS, EPSILON, LABELS as HA, fit_classifier, 
 STATES = np.array(["H", "A", "D"])
 DEAD_BALL_WEIGHT = 0.34  # w: peso del classificatore D con palla (vedi docstring)
 MAX_FALSE_D = 0.30       # quota massima di D sui frame vivi con palla assente, in validazione
+# Astensione (lavoro A8): dove la probabilità più alta (forward-backward) è sotto
+# questa soglia, l'etichetta diventa X. None = mai X. Scelta su Metrica con
+# `--astensione`: deve alzare il macroF1 (lo spareggio) senza abbassare lo spellF1.
+ABSTAIN_THRESHOLD = None
 DEFAULT_GRID = {"temperature": (0.03, 0.05, 0.1, 0.2),
                 "switch_scale": (1.0, 2.0, 4.0, 8.0, 16.0),
                 "neutral_without_ball": (False, True),
@@ -344,26 +348,51 @@ def fit_dah_model(games, grid=None, objective="spellF1", max_false_d=MAX_FALSE_D
                     [g.name for g in games], sklearn.__version__)
 
 
-def predict_dah(model, features, dead_features, continuous, probabilities=False):
-    """Etichette H/A/D per frame; con `probabilities` anche p_H, p_A, p_D (forward-backward)."""
+def abstain(labels, post, threshold):
+    """X dove la probabilità più alta del frame è sotto `threshold`; None = nessuna X.
+
+    `labels`: etichette di Viterbi; `post`: probabilità (n, 3) da `posteriors`.
+    Per lo spellF1 una X vale come l'ultima etichetta del tratto (all'inizio di un
+    tratto, la prima che segue); per il macroF1 è un errore solo per la classe vera,
+    mentre un'etichetta sbagliata penalizza due classi.
+    """
+    labels = np.asarray(labels).astype("<U1")
+    if threshold is None:
+        return labels
+    if not 0 < threshold <= 1:
+        raise ValueError("La soglia di astensione va in (0, 1]")
+    return np.where(np.asarray(post).max(axis=1) < threshold, "X", labels)
+
+
+def predict_dah(model, features, dead_features, continuous, probabilities=False, abstain_threshold="default"):
+    """Etichette H/A/D per frame (X dove il modello è incerto, vedi `abstain`); con
+    `probabilities` anche p_H, p_A, p_D (forward-backward).
+    `abstain_threshold`: soglia di astensione; "default" = ABSTAIN_THRESHOLD."""
+    threshold = ABSTAIN_THRESHOLD if abstain_threshold == "default" else abstain_threshold
     game = DahGame("run", features, dead_features, np.array([]), continuous)
     parts = evidence_parts((model.ha_classifier, model.ha_columns, model.ha_prior, model.dead_without,
                             model.dead_with), game)
     labels = decode(parts, continuous, model.transitions, model.params)
-    result = pd.DataFrame({"frame": features["frame"].to_numpy(), "label": labels})
-    if probabilities:
+    post = None
+    if probabilities or threshold is not None:
         log_t = np.log(scaled_transitions(model.transitions, model.params["switch_scale"]))
         post = posteriors(emissions(parts, model.params), log_t, continuous)
+    result = pd.DataFrame({"frame": features["frame"].to_numpy(), "label": abstain(labels, post, threshold)})
+    if probabilities:
         for j, state in enumerate(STATES):
             result[f"p_{state}"] = post[:, j]
     return result
 
 
-def cross_validate(games, grid=None, objective="spellF1", extra=(), max_false_d=MAX_FALSE_D):
+def cross_validate(games, grid=None, objective="spellF1", extra=(), max_false_d=MAX_FALSE_D, abstain_thresholds=()):
     """Valutazione annidata: per ogni partita di test, parametri scelti sulle altre.
 
     `extra`: altre versioni sporcate delle stesse partite, usate solo per il
     training quando la loro partita non è quella di test.
+    `abstain_thresholds`: soglie di astensione da provare. Il modello si allena una
+    volta sola; per ogni soglia si aggiungono spellF1, macroF1 e quota di X ottenuti
+    mettendo X sulle previsioni (colonne `spellF1_X0.5`, `macroF1_X0.5`, `quota_X0.5`).
+    Le altre colonne restano quelle senza astensione.
     """
     if len(games) < 3:
         raise ValueError("La valutazione annidata richiede almeno tre partite")
@@ -371,10 +400,21 @@ def cross_validate(games, grid=None, objective="spellF1", extra=(), max_false_d=
     for test in games:
         train = [g for g in list(games) + list(extra) if g.name != test.name]
         model = fit_dah_model(train, grid, objective, max_false_d)
-        pred = predict_dah(model, test.features, test.dead_features, test.continuous).label.to_numpy()
-        rows.append({"partita_test": test.name, **model.params,
-                     **evaluate_dah(test.labels, pred, breaks=_breaks(test.continuous)),
-                     "D_falsi_palla_assente_vivo": false_dead_rate(test.labels, pred, test.features)})
+        result = predict_dah(model, test.features, test.dead_features, test.continuous,
+                             probabilities=bool(abstain_thresholds), abstain_threshold=None)
+        pred = result.label.to_numpy()
+        breaks = _breaks(test.continuous)
+        row = {"partita_test": test.name, **model.params, **evaluate_dah(test.labels, pred, breaks=breaks),
+               "D_falsi_palla_assente_vivo": false_dead_rate(test.labels, pred, test.features)}
+        if abstain_thresholds:
+            post = result[[f"p_{s}" for s in STATES]].to_numpy()
+            for threshold in abstain_thresholds:
+                with_x = abstain(pred, post, threshold)
+                scores = _challenge(test.labels, with_x, breaks)
+                row[f"spellF1_X{threshold:g}"] = scores["spellF1"]
+                row[f"macroF1_X{threshold:g}"] = scores["macroF1"]
+                row[f"quota_X{threshold:g}"] = float(np.mean(with_x == "X"))
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -394,6 +434,8 @@ def main(argv=None):
                         help="cartella con altre versioni sporcate delle stesse partite (solo training)")
     parser.add_argument("--oriented", choices=["si", "no"], help="forza le feature orientate")
     parser.add_argument("--context", choices=["si", "no"], help="forza le feature di contesto")
+    parser.add_argument("--astensione", type=lambda text: tuple(float(v) for v in text.split(",")), default=(),
+                        metavar="S1,S2,...", help="soglie di astensione da provare, per esempio 0.4,0.5,0.6")
     parser.add_argument("--output", default="outputs/model_dah_cv.json")
     args = parser.parse_args(argv)
     options = {k: v == "si" for k, v in (("oriented", args.oriented), ("context", args.context)) if v}
@@ -402,9 +444,18 @@ def main(argv=None):
     extra = [g for folder in args.extra for g in load_dah_games(folder, primary=False, ball_position=position,
                                                                 **options)]
     table = cross_validate(load_dah_games(args.metrica_dir, ball_position=position, **options), grid,
-                           objective=args.objective, extra=extra, max_false_d=args.max_falsi_d)
+                           objective=args.objective, extra=extra, max_false_d=args.max_falsi_d,
+                           abstain_thresholds=args.astensione)
     pd.set_option("display.width", 250)
     print(table.round(4).to_string(index=False))
+    if args.astensione:
+        summary = pd.DataFrame([{"soglia": "nessuna", "spellF1": table.spellF1.mean(), "macroF1": table.macroF1.mean(),
+                                 "quota_X": 0.0}]
+                               + [{"soglia": f"{t:g}", "spellF1": table[f"spellF1_X{t:g}"].mean(),
+                                   "macroF1": table[f"macroF1_X{t:g}"].mean(), "quota_X": table[f"quota_X{t:g}"].mean()}
+                                  for t in args.astensione])
+        print("\nAstensione, media sulle partite:")
+        print(summary.round(4).to_string(index=False))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(table.to_dict(orient="records"), indent=2, default=str))
     print("Salvato in", args.output)
