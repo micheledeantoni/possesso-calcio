@@ -1,0 +1,30 @@
+# A8: astensione X con soglia sulle probabilità (16 novembre 2026)
+# Comando: python -m src.model_dah data/metrica --extra data/metrica_extra_1 --extra data/metrica_extra_2 \
+#            --astensione 0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.8,0.9,0.95,0.99
+# Dati: Train set del gruppo + due sporcature in più; valutazione annidata leave-one-game-out; obiettivo spellF1;
+# modello di main 61b33c8 (A1 + A5 + classificatore D con palla). Il modello si allena una volta: le soglie
+# mettono X dove la probabilità più alta del forward-backward è sotto la soglia.
+# Per lo spellF1 una X prende l'ultima etichetta nota del tratto; per il macroF1 è un errore solo per la
+# classe vera. Solo partite Metrica.
+
+soglia   spellF1  per partita              macroF1  per partita              quota_X
+nessuna  0.7131   0.722 / 0.732 / 0.685    0.9289   0.915 / 0.938 / 0.934    0.000
+0.35     0.7131   0.722 / 0.732 / 0.685    0.9289   0.915 / 0.938 / 0.934    0.000
+0.40     0.7131   0.722 / 0.732 / 0.685    0.9286   0.915 / 0.937 / 0.933    0.001
+0.45     0.7131   0.722 / 0.732 / 0.685    0.9286   0.915 / 0.937 / 0.933    0.003
+0.50     0.7133   0.723 / 0.732 / 0.685    0.9285   0.915 / 0.937 / 0.934    0.007
+0.55     0.7126   0.722 / 0.731 / 0.685    0.9264   0.912 / 0.934 / 0.934    0.019
+0.60     0.7136   0.724 / 0.729 / 0.687    0.9250   0.911 / 0.931 / 0.933    0.027
+0.65     0.7141   0.726 / 0.727 / 0.689    0.9236   0.909 / 0.929 / 0.932    0.035
+0.70     0.7115   0.723 / 0.722 / 0.690    0.9220   0.907 / 0.928 / 0.931    0.043
+0.80     0.7079   0.720 / 0.714 / 0.690    0.9181   0.903 / 0.923 / 0.928    0.062
+0.90     0.6983   0.710 / 0.705 / 0.681    0.9120   0.896 / 0.917 / 0.924    0.087
+0.95     0.6884   0.697 / 0.691 / 0.677    0.9051   0.886 / 0.911 / 0.919    0.110
+0.99     0.6308   0.600 / 0.643 / 0.649    0.8789   0.844 / 0.888 / 0.905    0.172
+
+# Conclusione: ABSTAIN_THRESHOLD resta None.
+# - Il massimo dello spellF1 (0,65: +0,001) è rumore: peggiora la partita 2 (0,732 -> 0,727) ed è scelto
+#   guardando questi stessi risultati, quindi è ottimista.
+# - Il macroF1 (spareggio) cala con ogni soglia, già di 0,005 a 0,65.
+# - Sopra 0,7 cala anche lo spellF1: le X spostano in avanti i confini dei possessi e abbassano l'IoU.
+# - Il modello è già deciso: meno dell'1% dei frame ha probabilità massima sotto 0,5.
