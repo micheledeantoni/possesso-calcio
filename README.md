@@ -219,9 +219,21 @@ Valutazione annidata sui tre match Metrica sporcati (parametri scelti sulle altr
 
 Senza smoothing il classificatore predice 1.300–1.650 cambi. Viterbi tende a perdere i possessi brevi: recall dei cambi 55–70%, precisione 64–81%. I parametri scelti variano fra le partite e la scala del cambio è spesso al bordo della griglia (4,0): la griglia va allargata. Risultati completi: `docs/audit_drive/model_cv.txt`; per ripeterli: `python -m src.model data/metrica`.
 
-### F. Sporcatura dei dati Metrica (training set)
+### F. Etichette e sporcatura dei dati Metrica (training set)
 
-File: `src/dirtying.py`. Non fa parte del notebook: prepara i dati di training.
+File: `src/metrica_labels.py` e `src/dirtying.py`. Non fanno parte del notebook: preparano i dati di training.
+
+Le etichette vengono dalle tre partite di esempio pubbliche di Metrica ([metrica-sports/sample-data](https://github.com/metrica-sports/sample-data), cartella `data/`, circa 180 MB). `src/metrica_labels.py` riprende lo script del gruppo con le stesse regole:
+- **D** è un buco della palla nel tracking spiegato da un'interruzione (palla fuori, fallo, tiro o cartellino, da 3 s prima a 1 s dopo l'inizio del buco) oppure da una ripresa (calcio piazzato o rinvio dal fondo entro 1 s dalla fine del buco);
+- **H/A** è la squadra dell'ultimo evento di possesso (passaggio, conduzione, recupero, calcio piazzato, tiro).
+
+Rigenerate dai dati pubblici, le etichette e i tempi di gioco coincidono frame per frame con quelli dei file `Train set` del gruppo (`docs/audit_drive/b1_etichette.txt`).
+
+```sh
+python -m src.metrica_labels data/metrica_sample data/metrica_etichettati
+```
+
+Le partite etichettate sono poi sporcate e ripulite da `src/dirtying.py`.
 
 Riscrive le "Linee guida sporcatura" del gruppo, perché lo script originale non è disponibile. Le operazioni, applicate ai dati Metrica puliti con un seme fisso, sono sei:
 - assenze di durata log-normale, più frequenti vicino alle linee laterali e alla palla; spesso un gruppo di vicini sparisce e ricompare insieme;
@@ -245,11 +257,13 @@ Verifica incrociata del modello:
 
 Per il modello le due sporcature sono equivalenti. I dati della repo risultano circa 1 punto più facili come test, quindi il `Train set` resta la stima più prudente.
 
-Per generare i file (stesso formato del `Train set`, già ripuliti con `src/cleaning.py`):
+Per generare i file (stesso formato del `Train set`, già ripuliti con `src/cleaning.py`), partendo dalle partite etichettate qui sopra, che contengono già il tempo di gioco:
 
 ```sh
-python -m src.dirtying "<cartella npz Metrica puliti>" data/metrica --periods-from "<cartella Train set>"
+python -m src.dirtying data/metrica_etichettati data/metrica
 ```
+
+`--periods-from "<cartella Train set>"` serve solo con gli npz etichettati dalla versione originale dello script, che non salvava il tempo di gioco.
 
 `--periods-from` prende il periodo di gioco dai file del gruppo: i dati puliti non lo contengono.
 

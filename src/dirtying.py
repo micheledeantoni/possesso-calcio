@@ -25,6 +25,8 @@ Nessun doppione aggiunto: Metrica ne ha già. Le etichette non cambiano.
 
 Uso: genera i file come quelli del `Train set` (sporcati e poi puliti):
     python -m src.dirtying <cartella npz Metrica puliti> <cartella di uscita> [--periods-from <Train set>]
+Gli npz puliti si generano dai dati pubblici con `python -m src.metrica_labels` e
+contengono già il tempo di gioco: `--periods-from` serve solo con i vecchi npz del gruppo.
 """
 from dataclasses import dataclass, asdict, replace
 from pathlib import Path

@@ -1,0 +1,25 @@
+# B1: etichette Metrica nella repo, dai dati pubblici (16 novembre 2026)
+# Origine: script del gruppo "Etichette sample games.py" (Lorenzo, Drive, cartella Codice, 7/11),
+# portato in src/metrica_labels.py con le stesse regole e gli stessi parametri. Aggiunto il tempo di gioco
+# (`periodo`): partite 1-2 dalla colonna Period dei CSV, partita 3 dal primo evento di ogni tempo.
+# Dati: https://github.com/metrica-sports/sample-data, cartella data/ (8 file, circa 180 MB), in data/metrica_sample/.
+#
+# Comandi
+#   python -m src.metrica_labels data/metrica_sample data/metrica_etichettati
+#   python -m src.dirtying data/metrica_etichettati data/metrica_extra_1 --seed 0
+#   python -m src.dirtying data/metrica_etichettati data/metrica_extra_2 --seed 10
+
+partita  frame    H      A      D      X     buchi morti  buchi vivi  possessi  durata media  sotto 1 s
+1        145006   30.3%  31.2%  38.5%  0.0%  108          47          353       10.1 s        6%
+2        141156   31.2%  29.1%  39.7%  0.0%  107          62          321       10.6 s        7%
+3        143761   34.9%  33.2%  31.9%  0.0%  112          48          385       10.2 s        8%
+
+# Verifica contro i file del gruppo
+# - Etichette: identiche frame per frame a `etichette` dei tre file data/metrica (Train set), 0 frame diversi.
+# - Tempo di gioco: identico a `periodo` dei tre file del Train set.
+# - Sporcature in più: rigenerate dai dati pubblici con i comandi sopra, i sei file di data/metrica_extra_1 e
+#   data/metrica_extra_2 sono identici array per array a quelli usati per la consegna.
+#
+# Limite: i tre file di data/metrica (Train set) sono stati sporcati dallo script originale del gruppo, che non
+# è disponibile. src/dirtying.py ne riproduce le caratteristiche (dirtying_check.txt) ma non gli stessi file.
+# Per riprodurre esattamente la consegna servono quindi quei tre npz; il resto si rigenera dai dati pubblici.
