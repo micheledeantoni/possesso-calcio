@@ -20,6 +20,5 @@ partita  frame    H      A      D      X     buchi morti  buchi vivi  possessi  
 # - Sporcature in più: rigenerate dai dati pubblici con i comandi sopra, i sei file di data/metrica_extra_1 e
 #   data/metrica_extra_2 sono identici array per array a quelli usati per la consegna.
 #
-# Limite: i tre file di data/metrica (Train set) sono stati sporcati dallo script originale del gruppo, che non
-# è disponibile. src/dirtying.py ne riproduce le caratteristiche (dirtying_check.txt) ma non gli stessi file.
-# Per riprodurre esattamente la consegna servono quindi quei tre npz; il resto si rigenera dai dati pubblici.
+# I tre file del Train set erano stati sporcati dallo script originale del gruppo, non disponibile. Dal 16/11
+# anche la versione principale è generata dalla repo (seme 20): vedi rigenerazione_dati.txt.

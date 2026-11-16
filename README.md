@@ -4,7 +4,7 @@ Una pipeline esplorativa per stimare la squadra in possesso a partire dal tracki
 
 **Un notebook, tre moduli su cui lavorare:** palla mancante, tracce dei giocatori, caratteristiche e regole di possesso. Ogni trasformazione conserva gli input originali e registra cosa modifica.
 
-> Stato attuale (15 novembre 2026): tre metodi selezionabili. La baseline geometrica sceglie la squadra più vicina alla palla oppure si astiene; `model` (classificatore + Viterbi) assegna H/A a ogni frame; `model_dah`, il predefinito per la consegna, aggiunge il gioco fermo D. I modelli sono addestrati soltanto sulle partite Metrica: su Metrica `model_dah` fa 0,713 di spellF1 (§4H), che **non è una previsione dello score**. Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
+> Stato attuale (16 novembre 2026): tre metodi selezionabili. La baseline geometrica sceglie la squadra più vicina alla palla oppure si astiene; `model` (classificatore + Viterbi) assegna H/A a ogni frame; `model_dah`, il predefinito per la consegna, aggiunge il gioco fermo D. I modelli sono addestrati soltanto sulle partite Metrica: su Metrica `model_dah` fa 0,708 di spellF1 (§4H), che **non è una previsione dello score**. Tutti i dati di training si rigenerano dai dati pubblici Metrica con il codice della repo (§4F). Le visualizzazioni descrivono le trasformazioni, non dimostrano accuratezza.
 
 ## 1. Avvio
 
@@ -60,7 +60,7 @@ Non occorre modificare le celle delle tappe per cambiare intervallo o attivare u
 python -m src.run_notebook --full --run-name consegna
 ```
 
-Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2` (vedi `data/README.md`). Sulla partita intera richiede circa 10 minuti, quasi tutti di addestramento su Metrica, e quasi tutta la RAM di un computer da 16 GB (0,3 GB liberi al minimo): chiudere gli altri programmi prima di lanciarla.
+Esegue il notebook su tutta la registrazione, con il salvataggio attivo e senza grafici, usando il metodo predefinito: `model_dah`, con le leve di stabilità e le sporcature in più. Produce `outputs/consegna/submission.csv`, cioè 199.319 righe `frame,label`, e salva il notebook eseguito in `outputs/consegna/notebook_eseguito.ipynb`. Sul terminale stampa solo lo stato e i controlli di formato. Servono i file della partita in `data/` e gli npz Metrica in `data/metrica`, `data/metrica_extra_1` e `data/metrica_extra_2`, che si generano dai dati pubblici con tre comandi (vedi `data/README.md`). Sulla partita intera richiede circa 10 minuti, quasi tutti di addestramento su Metrica, e quasi tutta la RAM di un computer da 16 GB (0,3 GB liberi al minimo): chiudere gli altri programmi prima di lanciarla.
 
 ## 3. CONFIG: i comandi della run
 
@@ -255,17 +255,19 @@ Verifica incrociata del modello:
 | 2 (dati `Train set`) | 90,6% | 90,3% |
 | 3 (dati `Train set`) | 90,2% | 89,3% |
 
-Per il modello le due sporcature sono equivalenti. I dati della repo risultano circa 1 punto più facili come test, quindi il `Train set` resta la stima più prudente.
+Per il modello le due sporcature sono equivalenti.
 
-Per generare i file (stesso formato del `Train set`, già ripuliti con `src/cleaning.py`), partendo dalle partite etichettate qui sopra, che contengono già il tempo di gioco:
+Dal 16 novembre **tutti i dati di training sono generati dalla repo**, con tre semi fissati prima di guardare i risultati: 20 per la versione principale, 0 e 10 per le due in più. Partendo dalle partite etichettate qui sopra, che contengono già il tempo di gioco:
 
 ```sh
-python -m src.dirtying data/metrica_etichettati data/metrica
+python -m src.dirtying data/metrica_etichettati data/metrica --seed 20
+python -m src.dirtying data/metrica_etichettati data/metrica_extra_1 --seed 0
+python -m src.dirtying data/metrica_etichettati data/metrica_extra_2 --seed 10
 ```
 
-`--periods-from "<cartella Train set>"` serve solo con gli npz etichettati dalla versione originale dello script, che non salvava il tempo di gioco.
+I file sono nello stesso formato del `Train set`, già ripuliti con `src/cleaning.py`. Il `Train set` del gruppo non serve più: con la versione principale generata così lo spellF1 medio passa da 0,713 a 0,708 (§4H, `docs/audit_drive/rigenerazione_dati.txt`).
 
-`--periods-from` prende il periodo di gioco dai file del gruppo: i dati puliti non lo contengono.
+`--periods-from "<cartella Train set>"` serve solo con gli npz etichettati dalla versione originale dello script, che non salvava il tempo di gioco.
 
 ### G. Modello a tre stati H/A/D (gioco fermo)
 
@@ -332,9 +334,16 @@ Il lavoro successivo, con la stessa valutazione, le leve e due sporcature in pi�
 | A3: classificatori regolarizzati | 0,637 | 0,611 | 0,601 | 0,616 | 20,0% |
 | + A1: posizione della palla per D | 0,662 | 0,648 | 0,642 | 0,651 | 21,5% |
 | + A5: feature di possesso | 0,687 | 0,678 | 0,672 | 0,679 | 21,8% |
-| **+ classificatore D con palla, w = 0,34 (predefinito)** | **0,722** | **0,732** | **0,685** | **0,713** | 24,8% |
+| + classificatore D con palla, w = 0,34 | 0,722 | 0,732 | 0,685 | 0,713 | 24,8% |
 
-macroF1 del predefinito: 0,915, 0,938, 0,934. L'ultimo passo guadagna su Metrica, ma in parte con la scorciatoia "palla assente ⇒ D", come mostrano i falsi D in più. Per rifare il confronto senza: `--peso-palla 0`.
+Questi numeri usano come versione principale il `Train set` del gruppo. Con tutti i dati generati dalla repo (§4F), che è la configurazione attuale:
+
+| `model_dah`, dati generati dalla repo | Partita 1 | Partita 2 | Partita 3 | Media | Falsi D nei buchi a gioco vivo |
+|---|---|---|---|---|---|
+| **predefinito, w = 0,34** | **0,748** | **0,736** | **0,640** | **0,708** | 22,7% |
+| senza classificatore con palla, w = 0 | 0,708 | 0,680 | 0,670 | 0,686 | 21,9% |
+
+macroF1 del predefinito: 0,920, 0,939, 0,926. Il classificatore con palla guadagna in media, ma in parte con la scorciatoia "palla assente ⇒ D", e non in tutte le partite: sulla partita 3 perde 0,03, perché lì i parametri scelti finiscono al bordo della griglia (scala 1). Per rifare il confronto: `--peso-palla 0`.
 
 Le leve di stabilità sono tre: feature orientate, feature di contesto (§4D) e due versioni sporcate in più per partita nel training. L'effetto di ciascuna, misurata da sola:
 - feature orientate: +0,051 di spellF1 medio;

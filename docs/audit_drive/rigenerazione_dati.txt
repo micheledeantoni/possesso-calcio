@@ -1,0 +1,31 @@
+# Dati di training rigenerati interamente dalla repo (16 novembre 2026)
+# Fino al 15/11 la versione principale (data/metrica) era il Train set del gruppo, sporcato da uno script
+# originale non disponibile. Ora tutto si genera dai dati pubblici metrica-sports/sample-data:
+#
+#   python -m src.metrica_labels data/metrica_sample data/metrica_etichettati
+#   python -m src.dirtying data/metrica_etichettati data/metrica --seed 20
+#   python -m src.dirtying data/metrica_etichettati data/metrica_extra_1 --seed 0
+#   python -m src.dirtying data/metrica_etichettati data/metrica_extra_2 --seed 10
+#
+# Semi fissati prima di guardare i risultati: 0 e 10 erano già quelli delle versioni in più (che escono
+# identiche, vedi b1_etichette.txt), 20 è il successivo libero. La sporcatura usa seme + numero della partita.
+#
+# Valutazione: python -m src.model_dah data/metrica --extra data/metrica_extra_1 --extra data/metrica_extra_2
+# (leave-one-game-out annidata, obiettivo spellF1, main 5f79104). Solo partite Metrica.
+
+versione principale         w      spellF1  per partita              macroF1  falsiD  per partita
+Train set del gruppo        0,34   0.7131   0.722 / 0.732 / 0.685    0.9289   0.248   0.373 / 0.289 / 0.082
+generata dalla repo, s. 20  0,34   0.7082   0.748 / 0.736 / 0.640    0.9280   0.227   0.287 / 0.339 / 0.056   <- predefinito
+generata dalla repo, s. 20  0      0.6861   0.708 / 0.680 / 0.670    0.9084   0.219   0.284 / 0.325 / 0.049
+
+# Parametri scelti per partita, predefinito: temperatura 0,2 / 0,2 / 0,1; scala 8 / 8 / 1; emissioni neutre
+# senza palla sì / sì / no. Sulla partita 3 la scala scelta è al bordo basso della griglia, e lo spellF1 cala.
+#
+# Note
+# - La media resta quasi uguale (0,713 -> 0,708): la sporcatura della repo si comporta come quella del gruppo.
+#   Le singole partite cambiano di più (+0,026 / +0,004 / -0,045): con tre partite il rumore è grande.
+# - Il classificatore D con palla (w = 0,34) resta in vantaggio in media (+0,022), ma non sulla partita 3.
+# - La consegna con questi dati (outputs/consegna_rigenerata/submission.csv) è valida e diversa dalla precedente.
+#   SHA256: fcce40e37e1d95efa07191d2f51552296440edb6ef122f2cf7278d57f9e4ebe0
+#   Le run sono deterministiche (random_state 42): con gli stessi dati e le stesse versioni dei pacchetti
+#   il file esce identico.
