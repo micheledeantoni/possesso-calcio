@@ -1,0 +1,47 @@
+# A7: robustezza del modello consegnato a sporcature più cattive (17 novembre 2026)
+# Idea e prima versione: Cesare (PR #8). Riscritta in docs/audit_drive/scripts/a7_robustezza.py perché valuti
+# il modello della consegna: per ogni partita di test il modello si addestra sulle altre due come in
+# `python -m src.model_dah` (data/metrica + data/metrica_extra_1 e _2), poi è testato sulla stessa partita
+# sporcata in modo normale e in sei scenari. Prima versione: addestrava su partite pulite, cioè un altro modello.
+#
+# Comando: python docs/audit_drive/scripts/a7_robustezza.py --genera   (36 minuti)
+# Scenari: dalle stesse partite etichettate e dallo stesso seme della versione principale (20), con una sola
+# quantità di DirtParams cambiata (src/dirtying.py --param). Intensità fissate a priori dalla scheda A7.
+#   assenze           absent_per_frame            1,2  -> 1,5 (x1,25) e 1,8 (x1,5)
+#   errori di squadra team_error_pieces_per_min   0,09 -> 0,135 (x1,5) e 0,18 (x2)
+#   buchi della palla ball_gaps                   12   -> 24 (x2) e 36 (x3)
+# Solo partite Metrica.
+
+media sulle tre partite        spellF1 w=0,34   delta   partite peggiorate   spellF1 w=0   delta    falsi D w=0,34
+normale                        0.708            -       -                    0.686         -        22.7%
+assenze x1,25                  0.689            -0.020  3 su 3               0.660         -0.026   24.0%
+assenze x1,5                   0.685            -0.023  3 su 3               0.662         -0.024   22.0%
+errori di squadra x1,5         0.692            -0.016  3 su 3               0.669         -0.017   23.2%
+errori di squadra x2           0.708            -0.001  2 su 3               0.694         +0.008   24.2%
+buchi della palla x2           0.701            -0.008  2 su 3               0.680         -0.007   16.4%
+buchi della palla x3           0.699            -0.010  2 su 3               0.677         -0.009   13.9%
+
+# Per partita (spellF1 con w = 0,34; tra parentesi la differenza dal normale)
+#   normale                 0.748          0.736          0.640
+#   assenze x1,25           0.721 (-0.028) 0.709 (-0.028) 0.637 (-0.004)
+#   assenze x1,5            0.700 (-0.048) 0.722 (-0.014) 0.633 (-0.007)
+#   errori di squadra x1,5  0.730 (-0.018) 0.720 (-0.017) 0.626 (-0.015)
+#   errori di squadra x2    0.735 (-0.013) 0.761 (+0.025) 0.627 (-0.014)
+#   buchi della palla x2    0.749 (+0.001) 0.723 (-0.013) 0.630 (-0.010)
+#   buchi della palla x3    0.749 (+0.001) 0.717 (-0.020) 0.631 (-0.010)
+# Controllo: lo scenario normale riproduce esattamente la validazione di rigenerazione_dati.txt.
+
+# Lettura
+# - Rumore: ogni scenario ridisegna tutta la sporcatura (cambiare una quantità sposta i numeri casuali), quindi
+#   una partita si muove di +-0,02-0,03 anche senza un effetto vero: errori di squadra x2 migliora la partita 2
+#   di 0,025. Contano solo gli effetti che valgono su tutte le partite e su entrambe le intensità.
+# - Assenze dei giocatori: l'unico effetto chiaro. Con 1,5-1,8 assenti per frame invece di 1,2 lo spellF1
+#   perde 0,02, su tutte e tre le partite e a entrambe le intensità. È il punto fragile.
+# - Errori di squadra: nessun effetto distinguibile dal rumore (x1,5 perde 0,016, x2 nulla).
+# - Buchi della palla a gioco vivo: costano poco (-0,01 con il triplo dei buchi), e il classificatore D con
+#   palla perde quanto quello senza (-0,010 contro -0,009). I falsi D scendono dal 23% al 14%: i buchi in più
+#   vengono chiamati D meno spesso dei primi 12. Su buchi come questi la scorciatoia della palla non peggiora.
+# - Il classificatore D con palla (w = 0,34) resta davanti in media in ogni scenario, ma sulla partita 3 resta
+#   dietro anche qui.
+# Limite: gli scenari imitano errori del tipo già presente nella sporcatura; un tracker che sbaglia in modo
+# diverso non è coperto.

@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 import numpy as np
 from src.arrays import TrackingArrays, load_metrica_npz
-from src.dirtying import DirtParams, dirty, dirt_statistics, make_training_game, save_training_game
+from src.dirtying import DirtParams, dirty, dirt_statistics, make_training_game, save_training_game, parse_params
 
 
 def clean_game(n=3000, seed=0):
@@ -98,6 +98,22 @@ class DirtyingTests(unittest.TestCase):
         np.testing.assert_array_equal(loaded.team, cleaned.team)
         np.testing.assert_array_equal(loaded.labels, self.clean.labels)
         self.assertEqual(loaded.pitch, (105., 68.))
+
+
+
+class ParseParamsTests(unittest.TestCase):
+    def test_changes_only_the_given_quantities_with_their_type(self):
+        params = parse_params(["ball_gaps=36", "absent_per_frame=1.8"])
+        self.assertEqual(params.ball_gaps, 36)
+        self.assertIsInstance(params.ball_gaps, int)
+        self.assertAlmostEqual(params.absent_per_frame, 1.8)
+        self.assertEqual(params.team_error_pieces_per_min, DirtParams().team_error_pieces_per_min)
+        self.assertEqual(parse_params([]), DirtParams())
+
+    def test_rejects_unknown_or_malformed_items(self):
+        for items in (["nope=1"], ["ball_gaps"], ["ball_gaps=tanti"]):
+            with self.assertRaises(ValueError):
+                parse_params(items)
 
 
 if __name__ == "__main__":

@@ -24,11 +24,11 @@ Operazioni, in quest'ordine, con seme fisso:
 Nessun doppione aggiunto: Metrica ne ha già. Le etichette non cambiano.
 
 Uso: genera i file come quelli del `Train set` (sporcati e poi puliti):
-    python -m src.dirtying <cartella npz Metrica puliti> <cartella di uscita> [--periods-from <Train set>]
+    python -m src.dirtying <cartella npz Metrica puliti> <cartella di uscita> [--seed N] [--param chiave=valore]
 Gli npz puliti si generano dai dati pubblici con `python -m src.metrica_labels` e
 contengono già il tempo di gioco: `--periods-from` serve solo con i vecchi npz del gruppo.
 """
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, asdict, fields, replace
 from pathlib import Path
 import math
 import numpy as np
@@ -346,6 +346,30 @@ def save_training_game(path, cleaned, interpolated, labels):
                         valutato=np.asarray(cleaned.segment) > 0, campo=np.asarray(cleaned.pitch, dtype=float))
 
 
+def parse_params(items, base=None):
+    """`DirtParams` con alcune quantità cambiate, da voci "chiave=valore".
+
+    Il tipo segue il valore predefinito (intero o decimale). Serve per scenari più
+    sporchi del normale (lavoro A7), per esempio `ball_gaps=36`.
+    """
+    base = DirtParams() if base is None else base
+    allowed = {f.name for f in fields(DirtParams)}
+    values = {}
+    for item in items:
+        key, sep, raw = item.partition("=")
+        key = key.strip()
+        if not sep:
+            raise ValueError(f"Parametro non valido: {item!r}, serve chiave=valore")
+        if key not in allowed:
+            raise ValueError(f"Parametro sconosciuto: {key}")
+        current = getattr(base, key)
+        try:
+            values[key] = int(raw) if isinstance(current, int) else float(raw)
+        except ValueError:
+            raise ValueError(f"Valore non valido per {key}: {raw!r}") from None
+    return replace(base, **values)
+
+
 def main(argv=None):
     import argparse, json
     from src.arrays import load_metrica_npz
@@ -354,7 +378,13 @@ def main(argv=None):
     parser.add_argument("out_dir")
     parser.add_argument("--periods-from", help="cartella con npz che contengono `periodo` per le stesse partite")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--param", action="append", default=[], metavar="CHIAVE=VALORE",
+                        help="cambia una quantità di DirtParams, per esempio ball_gaps=36; ripetibile")
     args = parser.parse_args(argv)
+    try:
+        params = parse_params(args.param)
+    except ValueError as error:
+        parser.error(str(error))
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for number, path in enumerate(sorted(Path(args.clean_dir).glob("*.npz")), start=1):
@@ -364,7 +394,7 @@ def main(argv=None):
             if match:
                 with np.load(match[0]) as data:
                     clean = replace(clean, segment=data["periodo"].astype(int))
-        cleaned, interpolated, log = make_training_game(clean, clean.labels, seed=args.seed + number)
+        cleaned, interpolated, log = make_training_game(clean, clean.labels, params, seed=args.seed + number)
         save_training_game(out / f"{path.stem}_sporca.npz", cleaned, interpolated, clean.labels)
         print(path.stem, json.dumps({k: v for k, v in log["sporcatura"].items() if k != "parametri"}),
               json.dumps(log["pulizia"]))

@@ -243,7 +243,9 @@ Riscrive le "Linee guida sporcatura" del gruppo, perché lo script originale non
 - salti di 0,6–3 m per un frame;
 - 12 buchi della palla da 5–10 s a gioco vivo, lontano dalle interruzioni e nei contrasti.
 
-Non aggiunge doppioni e non cambia le etichette. Tutte le quantità sono parametri di `DirtParams`.
+Non aggiunge doppioni e non cambia le etichette. Tutte le quantità sono parametri di `DirtParams`, che da terminale si cambiano con `--param`, per esempio `--param ball_gaps=36` per triplicare i buchi della palla a gioco vivo.
+
+Quanto regge il modello consegnato a sporcature più cattive di quella di training (lavoro A7) lo misura `docs/audit_drive/scripts/a7_robustezza.py`; i risultati sono in `docs/audit_drive/a7_robustezza.txt`.
 
 I valori predefiniti riproducono le quantità dei file `Train set` del gruppo, misurate con `dirt_statistics` confrontando le posizioni con i dati puliti. Le quantità del `Train set` erano state tarate dal gruppo sulle statistiche del tracking BAR-ATH, uso confermato come consentito. Non sono gli stessi file, ma dati con le stesse caratteristiche: i dettagli stanno in `docs/audit_drive/dirtying_check.txt`.
 
