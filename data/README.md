@@ -1,20 +1,20 @@
-# Input locali, esclusi da Git
+# Local data, excluded from Git
 
-Input principali:
+Nothing in this folder except this file is published: the match data is not redistributable.
+
+## The match
 
 - `BAR-ATH_tactical_atd.xml`
 - `BAR-ATH_tactical_atd.txt`
 
-È possibile copiarli dalla propria estrazione o creare collegamenti simbolici. Non rinominarli. I file non verranno condivisi attraverso Git. Su questo computer sono collegati ai Download: spostare o cancellare gli originali interrompe i collegamenti.
+Copy them from the challenge data bundle (tactical source), or link them. Keep the names. Optional: `BAR-ATH_tactical_smart_tagging.xml`, read only by the events section of the exploration notebook.
 
-Eseguire ogni lettura dei materiali riservati solo localmente. Non inviare contenuti o output ai servizi IA.
+## Training data, from public Metrica matches
 
-Facoltativo: `BAR-ATH_tactical_smart_tagging.xml`, per la sezione eventi.
+The models are trained on Metrica's three public sample matches, labelled, degraded and cleaned. They are external data, so they may be used for training and for choosing parameters.
 
-Per i modelli di possesso servono gli npz delle tre partite Metrica etichettate, sporcate e ripulite. Sono dati esterni: si possono usare per training e scelta dei parametri. Si generano dai dati pubblici Metrica (vedi README, §4F):
-
-1. Copiare in `data/metrica_sample/` le cartelle `Sample_Game_1`, `Sample_Game_2` e `Sample_Game_3` della cartella `data/` di https://github.com/metrica-sports/sample-data (circa 180 MB).
-2. Generare etichette e sporcature, con i semi della consegna:
+1. Copy into `data/metrica_sample/` the folders `Sample_Game_1`, `Sample_Game_2` and `Sample_Game_3` from the `data/` folder of https://github.com/metrica-sports/sample-data (about 180 MB).
+2. Generate labels and degraded versions, with the seeds of the submission:
 
 ```sh
 python -m src.metrica_labels data/metrica_sample data/metrica_etichettati
@@ -23,6 +23,4 @@ python -m src.dirtying data/metrica_etichettati data/metrica_extra_1 --seed 0
 python -m src.dirtying data/metrica_etichettati data/metrica_extra_2 --seed 10
 ```
 
-`data/metrica/` è la versione principale, usata anche per la scelta dei parametri; tutti i file `.npz` della cartella vengono usati. `data/metrica_extra_1` e `_2` sono versioni sporcate in più, solo per il training del modello H/A/D (CONFIG `metrica_extra_dirs`, già impostata). Con gli stessi semi i file escono identici, e con loro la submission.
-
-Il `Train set` del gruppo (cartella Drive `Train set/`), usato fino al 15 novembre come versione principale, non serve più; su questo computer è in `data/metrica_trainset/` per confronto.
+`data/metrica/` is the main version, also used to choose parameters; every `.npz` file in it is used. `data/metrica_extra_1` and `_2` are extra degraded versions, used only for training the H/A/D model (notebook setting `metrica_extra_dirs`, already set). With the same seeds the files come out identical, and so does the submission.

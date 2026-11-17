@@ -193,4 +193,4 @@ In ordine di priorità.
 
    Va aggiunto `scikit-learn` a `requirements.txt` con una versione fissata. I modelli si rigenerano dal codice: nessun `.pkl` in Git.
    **Stato (10/11):** fatto in `src/model.py`, che è la tappa 7 del notebook. Lo smoothing usa Viterbi invece della maggioranza mobile. Con la valutazione annidata sui dati sporcati l'accuratezza H/A è 89,5 / 90,3 / 89,3% e l'F1 dei cambi è 0,65–0,67. Questi numeri sono quelli dell'11/11, con la soglia di velocità dei giocatori. I risultati sono in `model_cv.txt`. La versione di scikit-learn non è fissata: c'è un vincolo minimo (`>=1.5`), così Python 3.10 resta supportato, e la versione usata viene registrata nel log della run.
-6. **Collegamento a CONFIG e al notebook**, secondo le regole del README (§4C): l'output resta `frame,label`, con gli stessi frame e lo stesso ordine.
+6. **Collegamento a CONFIG e al notebook**, secondo le regole della guida di sviluppo (`docs/guida_sviluppo.md`, §4C): l'output resta `frame,label`, con gli stessi frame e lo stesso ordine.
