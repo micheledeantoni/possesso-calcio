@@ -8,7 +8,7 @@ Una pipeline esplorativa per stimare la squadra in possesso a partire dal tracki
 
 ## 1. Avvio
 
-Servono Python 3.10 o successivo e i materiali della challenge ottenuti con accesso autorizzato. La versione minima è una scelta di supporto del progetto; non tutte le versioni Python sono state verificate.
+Servono Python e i materiali della challenge ottenuti con accesso autorizzato. La consegna è stata prodotta con **Python 3.14.7** e le versioni esatte di `requirements.txt`: per ottenere lo stesso file usare quelle. Con altre versioni il codice gira, ma la submission può cambiare di qualche frame.
 
 Aprire un terminale **nella cartella della repository**, poi:
 
